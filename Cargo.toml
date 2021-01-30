@@ -1,0 +1,10 @@
+[package]
+authors = ["Ben Hetherington <b.w.hetherington@gmail.com>"]
+edition = "2018"
+name = "rscript2"
+version = "0.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+peg = "*"

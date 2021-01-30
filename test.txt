@@ -1,0 +1,8 @@
+fn square(x) {
+  if cond {
+    return x;
+  } else {
+    return foo;
+  }
+  return "foo";
+}
