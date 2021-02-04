@@ -1,0 +1,46 @@
+let create_class = (Base) => create_object(Base, {
+  create: () => {
+    let obj = create_object(Base, {});
+    return obj;
+  },
+  new: (...args) => {
+    let instance = self.create();
+    instance.init(...args);
+    return instance;
+  },
+});
+
+let extend_class = (Base, Class) => create_object(Class, {
+  create: () => {
+    let base_obj = Base.create();
+    let next = create_object(base_obj, Class);
+    let instance = create_object(next, {});
+    return instance;
+  },
+  new: (...args) => {
+    let instance = self.create();
+    instance.init(...args);
+    return instance;
+  },
+});
+
+let Vehicle = create_class({
+  init: (speed) => {
+    self.position = 0;
+    self.speed = speed;
+  },
+  drive: (time) => {
+    self.position += self.speed * time;
+    return self;
+  },
+});
+
+let Car = extend_class(Vehicle, {
+  init: (speed, make) => {
+    super.init(speed);
+    self.make = make;
+  },
+});
+
+let v = Vehicle.new(5);
+let c = Car.new(5, 2);

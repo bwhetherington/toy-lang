@@ -1,12 +1,13 @@
 use peg::parser;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinaryOp {
     Add,
     Subtract,
     Multiply,
     Divide,
     Power,
+    Mod,
     Equals,
     NotEquals,
     GT,
@@ -15,15 +16,34 @@ pub enum BinaryOp {
     LTE,
     LogicAnd,
     LogicOr,
+    Index,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum UnaryOp {
     Negative,
     Not,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub enum LambdaBody {
+    Block(Vec<Statement>),
+    Expression(Box<Expression>),
+}
+
+#[derive(Debug, Clone)]
+pub struct Field {
+    pub name: String,
+    pub value: Expression,
+}
+
+#[derive(Debug, Clone)]
+pub struct Spread<T> {
+    pub value: T,
+    pub is_spread: bool,
+}
+
+#[derive(Debug, Clone)]
 pub enum Expression {
     Int(i32),
     Float(f64),
@@ -31,10 +51,15 @@ pub enum Expression {
     None,
     Identifier(String),
     String(String),
-    List(Vec<Expression>),
-    Call(Box<Expression>, Vec<Expression>),
+    List(Vec<Spread<Expression>>),
+    Call(Box<Expression>, Vec<Spread<Expression>>),
+    Member(Box<Expression>, String),
     Binary(BinaryOp, Box<Expression>, Box<Expression>),
     Unary(UnaryOp, Box<Expression>),
+    Lambda(Vec<String>, Option<String>, LambdaBody),
+    Pipe(Box<Expression>, Box<Expression>),
+    Object(Vec<Field>),
+    Link(Vec<String>),
 }
 
 fn binary(op: BinaryOp, lhs: Expression, rhs: Expression) -> Expression {
@@ -45,20 +70,25 @@ fn unary(op: UnaryOp, x: Expression) -> Expression {
     Expression::Unary(op, Box::new(x))
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Statement {
-    Function(String, Vec<String>, Vec<Statement>),
-    Assignment(String, Expression),
-    Conditional(Expression, Vec<Statement>, Vec<Statement>),
+    Function(bool, String, Vec<String>, Option<String>, LambdaBody),
+    Definition(bool, String, Expression),
+    Assignment(Expression, Expression),
+    BinaryAssignment(BinaryOp, Expression, Expression),
+    Conditional(Expression, Vec<Statement>, Option<Vec<Statement>>),
     Return(Expression),
     Expression(Expression),
+    Break,
+    Loop(Vec<Statement>),
+    While(Expression, Vec<Statement>),
 }
 
 parser!(pub grammar parser() for str {
     use peg::ParseLiteral;
 
     rule whitespace()
-        = quiet! { [' ' | '\t' | '\n'] }
+        = quiet! { [' ' | '\t' | '\r' | '\n'] }
 
     rule _()
         = whitespace()*
@@ -66,15 +96,22 @@ parser!(pub grammar parser() for str {
     rule __()
         = whitespace()+
 
-    rule string() -> &'input str
-        = "\"" s:$(!['"']) "\"" { s }
+    rule string_content() -> &'input str
+        = $((!['"'][_])*)
+
+    pub rule string() -> &'input str
+        = ['"'] s:string_content() ['"'] { s }
+        / expected!("string")
+
+    rule digit() -> &'input str
+        = n:$(['0'..='9']) { n }
 
     rule int() -> i32
-        = n:$(['+' | '-']? ['0'..='9']+) { n.parse().unwrap() }
+        = n:$(['+' | '-']? digit()+) { n.parse().unwrap() }
         / expected!("Int")
 
     rule float() -> f64
-        = n:$(int() ("." ['0'..='9']*) ("e" int())?) { n.parse().unwrap() }
+        = n:$(int() ("." digit()*) ("e" int())?) { n.parse().unwrap() }
         / expected!("Float")
 
     rule boolean() -> bool
@@ -82,12 +119,25 @@ parser!(pub grammar parser() for str {
         / "False" { false }
         / expected!("Boolean")
 
+    rule identifier_char() -> &'input str
+        = s:$(['a'..='z' | 'A'..='Z' | '_']) { s }
+
     rule identifier() -> &'input str
-        = chars:$(['a'..='z' | 'A'..='Z' | '_']+) { chars }
+        = chars:$(identifier_char() (identifier_char() / digit())*) { chars }
         / expected!("identifier")
 
+    rule link() -> Vec<String>
+        = first:to_string(<identifier()>) "::" i:to_string(<identifier()>) ** "::" {
+            let mut list = Vec::with_capacity(1 + i.len());
+            list.push(first);
+            for item in i {
+                list.push(item);
+            }
+            list
+        }
+
     rule comma_separated<T>(r: rule<T>) -> Vec<T>
-        = l:r() ** (_ "," _) { l }
+        = l:r() ** (_ "," _) _ ","? { l }
 
     rule enclosed<T>(start: &str, end: &str, r: rule<T>) -> T
         = ##parse_string_literal(start) _ inner:r() _ ##parse_string_literal(end) { inner }
@@ -95,39 +145,72 @@ parser!(pub grammar parser() for str {
     rule enclosed_list<T>(start: &str, end: &str, inner: rule<T>) -> Vec<T>
         = enclosed(start, end, <comma_separated(<inner()>)>)
 
-    rule list_expr() -> Vec<Expression>
-        = enclosed_list("[", "]", <expr()>)
+    rule list_expr() -> Vec<Spread<Expression>>
+        = enclosed_list("[", "]", <spread(<expr()>)>)
         / expected!("list")
 
-    rule arg_list() -> Vec<Expression>
-        = enclosed_list("(", ")", <expr()>)
+    rule spread<T>(item: rule<T>) -> Spread<T>
+        = "..." _ i:item() { Spread { is_spread: true, value: i } }
+        / i:item() { Spread { is_spread: false, value: i } }
 
-    rule call() -> Expression
-        = i:identifier() _ l:arg_list() {
-            Expression::Call(
-                Box::new(Expression::Identifier(i.to_string())),
-                l,
-            )
+    rule arg_list() -> Vec<Spread<Expression>>
+        = enclosed_list("(", ")", <spread(<expr()>)>)
+        / expected!("argument list")
+
+    rule to_string<T>(r: rule<T>) -> String
+        = s:$(r()) { s.to_string() }
+
+    rule param_list() -> (Vec<String>, Option<String>)
+        = "(" _ "..." _ last:to_string(<identifier()>) _ ","? _ ")" { (Vec::new(), Some(last)) }
+        / "(" _ i:to_string(<identifier()>) ** (_ "," _) "," _ "..." _ last:to_string(<identifier()>) _ ","? _ ")" { (i, Some(last)) }
+        / "(" _ i:to_string(<identifier()>) ** (_ "," _) ","? _ ")" { (i, None) }
+        / expected!("parameters")
+
+    rule lambda_body() -> LambdaBody
+        = b:body() { LambdaBody::Block(b) }
+        / e:expr() { LambdaBody::Expression(Box::new(e)) }
+
+    rule lambda() -> Expression
+        = p:param_list() _ "=>" _ b:lambda_body() {
+            let (params, last) = p;
+            Expression::Lambda(params, last, b)
+        }
+        / expected!("lambda")
+
+    rule field_decl() -> Field
+        = f:identifier() _ ":" _ v:expr() {
+            Field {
+                name: f.to_string(),
+                value: v,
+            }
         }
 
+    rule object() -> Expression
+        = f:enclosed_list("{", "}", <field_decl()>) { Expression::Object(f) }
+
     rule atom() -> Expression
-        = c:call() { c }
+        = n:float() { Expression::Float(n) }
         / n:int() { Expression::Int(n) }
-        / n:float() { Expression::Float(n) }
         / b:boolean() { Expression::Boolean(b) }
         / "None" { Expression::None }
         / s:string() { Expression::String(s.to_string()) }
         / i:identifier() { Expression::Identifier(i.to_string()) }
+        / l:link() { Expression::Link(l) }
         / l:list_expr() { Expression::List(l) }
+        / object()
+        / "(" _ x:expr() _ ")" { x }
 
-    pub rule expr() -> Expression = precedence! {
+    rule arithmetic() -> Expression = precedence! {
+        e:lambda() { e }
+        --
         x:(@) _ "+" _ y:@ { binary(BinaryOp::Add, x, y) }
         x:(@) _ "-" _ y:@ { binary(BinaryOp::Subtract, x, y) }
         --
         x:(@) _ "*" _ y:@ { binary(BinaryOp::Multiply, x, y) }
         x:(@) _ "/" _ y:@ { binary(BinaryOp::Divide, x, y) }
+        x:(@) _ "%" _ y:@ { binary(BinaryOp::Mod, x, y) }
         --
-        x:@ _ "**" _ y:(@) { binary(BinaryOp::Power, x, y) }
+        x:@ _ "^" _ y:(@) { binary(BinaryOp::Power, x, y) }
         --
         x:(@) _ "==" _ y:@ { binary(BinaryOp::Equals, x, y) }
         x:(@) _ "!=" _ y:@ { binary(BinaryOp::NotEquals, x, y) }
@@ -140,22 +223,48 @@ parser!(pub grammar parser() for str {
         --
         x:(@) _ "||" _ y:@ { binary(BinaryOp::LogicOr, x, y) }
         --
-        "!" _ x:expr() { unary(UnaryOp::Not, x) }
-        "-" _ x:expr() { unary(UnaryOp::Negative, x) }
+        "!" _ x:atom() { unary(UnaryOp::Not, x) }
+        "-" _ x:atom() { unary(UnaryOp::Negative, x) }
+        --
+        x:@ _ "[" _ y:(expr()) "]" { binary(BinaryOp::Index, x, y) }
+        x:@ _ "." _ y:(identifier()) { Expression::Member(Box::new(x), y.to_string()) }
+        x:@ _ l:arg_list() { Expression::Call(Box::new(x), l) }
         --
         e:atom() { e }
-        "(" _ e:expr() _ ")" { e }
     }
 
-    pub rule statements() -> Vec<Statement>
+    pub rule expr() -> Expression = precedence! {
+        x:(@) _ "|>" _ y:@ { Expression::Pipe(Box::new(x), Box::new(y)) }
+        --
+        e:arithmetic() { e }
+    }
+
+    rule bin_assignment() -> Statement
+        = lhs:expr() _ "+=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Add, lhs, rhs) }
+        / lhs:expr() _ "-=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Subtract, lhs, rhs) }
+        / lhs:expr() _ "*=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Multiply, lhs, rhs) }
+        / lhs:expr() _ "/=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Divide, lhs, rhs) }
+        / lhs:expr() _ "%=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Mod, lhs, rhs) }
+        / lhs:expr() _ "&&=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::LogicAnd, lhs, rhs) }
+        / lhs:expr() _ "||=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::LogicOr, lhs, rhs) }
+        / lhs:expr() _ "===" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Equals, lhs, rhs) }
+        / lhs:expr() _ "!==" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::NotEquals, lhs, rhs) }
+        / lhs:expr() _ "[]=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Index, lhs, rhs) }
+
+
+    rule assignment() -> Statement
+        = lhs:expr() _ "=" _ rhs:expr() _ ";" { Statement::Assignment(lhs, rhs) }
+
+    rule statements() -> Vec<Statement>
         = s:statement() ** _ { s }
 
     pub rule body() -> Vec<Statement>
         = "{" _ s:statements() _ "}" { s }
 
-    rule assignment() -> Statement
+    rule definition() -> Statement
         = "let" __ i:identifier() _ "=" _ e:expr() _ ";" {
-            Statement::Assignment(
+            Statement::Definition(
+                false,
                 i.to_string(),
                 e,
             )
@@ -163,35 +272,70 @@ parser!(pub grammar parser() for str {
 
     rule return_statement() -> Statement
         = "return" __ e:expr() _ ";" { Statement::Return(e) }
+        / "return" _ ";" { Statement::Return(Expression::None) }
 
     rule expression_statement() -> Statement
         = e:expr() _ ";" { Statement::Expression(e) }
 
     rule conditional() -> Statement
-        = "if" __ c:expr() _ then:body() _ "else" _ otherwise:body() {
+        = "if" __ c:expr() __ then:body() _ "else" _ otherwise:body() {
             Statement::Conditional(
                 c,
                 then,
-                otherwise,
+                Some(otherwise),
             )
         }
-
-    rule param_list() -> Vec<&'input str>
-        = enclosed_list("(", ")", <identifier()>)
+        / "if" __ c:expr() __ then:body() {
+            Statement::Conditional(
+                c, then, None
+            )
+        }
 
     rule function() -> Statement
-        = "fn" __ i:identifier() _ p:param_list() _ b:body() {
-            Statement::Function(
-                i.to_string(),
-                p.into_iter().map(|s| s.to_string()).collect(),
-                b,
-            )
+        = "func" __ i:to_string(<identifier()>) _ p:param_list() _ b:body() {
+            let (params, last) = p;
+            Statement::Function(false, i, params, last, LambdaBody::Block(b))
         }
 
-    pub rule statement() -> Statement
-        = s:function() { s }
-        / s:conditional() { s }
-        / s:assignment() { s }
-        / s:return_statement() { s }
-        / s:expression_statement() { s }
+    rule loop_statement() -> Statement
+        = "loop" _ b:body() { Statement::Loop(b) }
+
+    rule while_statement() -> Statement
+        = "while" __  c:expr() __ b:body() { Statement::While(c, b) }
+
+    rule statement_content() -> Statement
+        = function()
+        / conditional()
+        / definition()
+        / bin_assignment()
+        / assignment()
+        / return_statement()
+        / loop_statement()
+        / while_statement()
+        / "break" _ ";" { Statement::Break }
+        / expression_statement()
+        / expected!("statement")
+
+    rule module_decl() -> Statement
+        = "pub" __ f:function() {
+            match f {
+                Statement::Function(_, name, params, last, body) => Statement::Function(true, name, params, last, body),
+                _ => unreachable!()
+            }
+        }
+        / function()
+        / "pub" __ d:definition() {
+            match d {
+                Statement::Definition(_, name, value) => Statement::Definition(true, name, value),
+                _ => unreachable!()
+            }
+        }
+        / definition()
+        / e:expr() _ ";" { Statement::Expression(e) }
+
+    pub rule module() -> Vec<Statement>
+        = _ s:module_decl() ** _ _ { s }
+
+    rule statement() -> Statement
+        = ";"* _ s:statement_content() _ ";"* { s }
 });

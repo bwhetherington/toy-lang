@@ -1,0 +1,30 @@
+let Vehicle = {
+  new: (pos) => {
+    let instance = create_object(Vehicle, { pos: pos });
+    return instance;
+  },
+  move: (amount) => {
+    self.pos += amount;
+    return self.pos;
+  },
+};
+
+let Car = {
+  new: (pos, vel) => {
+    let super_instance = Vehicle.new(pos);
+    let base = create_object(super_instance, Car);
+    let instance = create_object(base, { vel: vel });
+    return instance;
+  },
+  move: (amount) => {
+    return super.move(amount * self.vel);
+  },
+};
+
+let a = Vehicle.new(5);
+print(a.move(5));
+
+let b = Car.new(5, 2);
+print(b.move(5));
+
+print(Vehicle, Car);
