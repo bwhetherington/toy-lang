@@ -32,9 +32,10 @@ pub enum DStatement {
     Definition(bool, String, DExpression),
     Break,
     Return(DExpression),
-    Loop(Vec<DStatement>),
-    Conditional(DExpression, Vec<DStatement>, Vec<DStatement>),
+    Loop(Box<DStatement>),
+    Conditional(DExpression, Box<DStatement>, Box<DStatement>),
     Expression(DExpression),
+    Block(Vec<DStatement>),
 }
 
 #[derive(Debug, Clone)]
@@ -184,6 +185,47 @@ impl TryFrom<&Statement> for DStatement {
 
     fn try_from(stmt: &Statement) -> Result<Self, Self::Error> {
         match stmt {
+            Statement::For(name, expr, body) => {
+                let expr = DExpression::try_from(expr)?;
+                let body = DStatement::try_from(body.as_ref())?;
+
+                Ok(DStatement::Block(vec![
+                    DStatement::Definition(
+                        false,
+                        "__iter__".to_string(),
+                        DExpression::Call(
+                            Box::new(DExpression::Member(Box::new(expr), "iter".to_string())),
+                            Vec::new(),
+                        ),
+                    ),
+                    DStatement::Loop(Box::new(DStatement::Block(vec![
+                        DStatement::Definition(
+                            false,
+                            name.clone(),
+                            DExpression::Call(
+                                Box::new(DExpression::Member(
+                                    Box::new(DExpression::Identifier("__iter__".to_string())),
+                                    "next".to_string(),
+                                )),
+                                Vec::new(),
+                            ),
+                        ),
+                        DStatement::Conditional(
+                            DExpression::Binary(
+                                BinaryOp::Equals,
+                                Box::new(DExpression::Identifier(name.clone())),
+                                Box::new(DExpression::None),
+                            ),
+                            Box::new(DStatement::Break),
+                            Box::new(body),
+                        ),
+                    ]))),
+                ]))
+            }
+            Statement::Block(body) => {
+                let body = try_from_list::<_, _, DStatement>(body)?;
+                Ok(DStatement::Block(body))
+            }
             Statement::Assignment(lhs, rhs) => {
                 let lhs = LValue::try_from(lhs)?;
                 let rhs = DExpression::try_from(rhs)?;
@@ -198,13 +240,17 @@ impl TryFrom<&Statement> for DStatement {
             }
             Statement::While(cond, body) => {
                 let cond = DExpression::try_from(cond)?;
-                let body = try_from_list::<_, _, DStatement>(body)?;
-                let new_body = vec![DStatement::Conditional(cond, body, vec![DStatement::Break])];
-                Ok(DStatement::Loop(new_body))
+                let body = DStatement::try_from(body.as_ref())?;
+                let new_body = vec![DStatement::Conditional(
+                    cond,
+                    Box::new(body),
+                    Box::new(DStatement::Break),
+                )];
+                Ok(DStatement::Loop(Box::new(DStatement::Block(new_body))))
             }
             Statement::Loop(body) => {
-                let body = try_from_list::<_, _, DStatement>(body)?;
-                Ok(DStatement::Loop(body))
+                let body = DStatement::try_from(body.as_ref())?;
+                Ok(DStatement::Loop(Box::new(body)))
             }
             Statement::Break => Ok(DStatement::Break),
             Statement::Return(expr) => {
@@ -222,12 +268,16 @@ impl TryFrom<&Statement> for DStatement {
             }
             Statement::Conditional(cond, then, otherwise) => {
                 let cond = DExpression::try_from(cond)?;
-                let then = try_from_list::<_, _, DStatement>(then)?;
+                let then = DStatement::try_from(then.as_ref())?;
                 let otherwise = match otherwise {
-                    Some(clause) => try_from_list::<_, _, DStatement>(clause),
-                    None => Ok(Vec::new()),
+                    Some(clause) => DStatement::try_from(clause.as_ref()),
+                    None => Ok(DStatement::Expression(DExpression::None)),
                 }?;
-                Ok(DStatement::Conditional(cond, then, otherwise))
+                Ok(DStatement::Conditional(
+                    cond,
+                    Box::new(then),
+                    Box::new(otherwise),
+                ))
             }
             Statement::Expression(expr) => {
                 let expr = DExpression::try_from(expr)?;

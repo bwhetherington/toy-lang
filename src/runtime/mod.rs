@@ -1,30 +1,34 @@
-use crate::{common::TLError, parser::DStatement};
+use crate::{common::TLError, module::ModuleLoader, parser::DStatement};
 
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    fmt,
-    rc::{Rc, Weak},
-};
+use std::{cell::RefCell, collections::HashMap, fmt, ops::Deref, rc::Rc};
 
 mod builtins;
-use builtins::Init;
+pub use builtins::Init;
 
 mod engine;
 mod env;
 mod ignore;
 mod obj;
 
-pub use engine::Engine;
+pub use engine::{Engine, EngineState};
 pub use ignore::IgnoreScope;
 pub use obj::Object;
 
 pub type Scope = HashMap<String, Value>;
 
-pub type BuiltinFn = Rc<dyn Fn(&[Value], &mut Engine) -> Result<Value, TLError>>;
+#[derive(Clone)]
+pub struct BuiltinFn {
+    pub self_value: Option<Value>,
+    pub func: Rc<dyn Fn(&[Value], &mut Engine, Option<&Value>) -> Result<Value, TLError>>,
+}
 
-pub fn builtin(f: impl Fn(&[Value], &mut Engine) -> Result<Value, TLError> + 'static) -> Value {
-    Value::Builtin(Builtin(Rc::new(f)))
+pub fn builtin(
+    f: impl Fn(&[Value], &mut Engine, Option<&Value>) -> Result<Value, TLError> + 'static,
+) -> Value {
+    Value::Builtin(Rc::new(BuiltinFn {
+        self_value: None,
+        func: Rc::new(f),
+    }))
 }
 
 #[derive(Debug, Clone)]
@@ -37,31 +41,20 @@ pub struct Function {
 }
 
 #[derive(Clone)]
-pub struct Builtin(BuiltinFn);
-
-#[derive(Clone)]
 pub enum Value {
-    Alias(Str),
     Number(f64),
     Boolean(bool),
     List(Ptr<Vec<Value>>),
     Function(Rc<Function>),
-    Builtin(Builtin),
+    Builtin(Rc<BuiltinFn>),
     String(Str),
     Object(Ptr<Object>),
     None,
 }
 
-impl fmt::Debug for Builtin {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "<func>")
-    }
-}
-
 impl fmt::Debug for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Value::Alias(a) => write!(f, "->{}", a),
             Value::Number(n) => write!(f, "{}", n),
             Value::Boolean(b) if *b => write!(f, "True"),
             Value::Boolean(..) => write!(f, "False"),
@@ -69,38 +62,34 @@ impl fmt::Debug for Value {
             Value::Function(..) => write!(f, "<func>"),
             Value::Builtin(..) => write!(f, "<func>"),
             Value::String(s) => write!(f, "{:?}", s),
-            Value::Object(o) => write!(
-                f,
-                "{{ proto: {:?}, fields: {:?} }}",
-                o.borrow().proto.as_ref(),
-                o.borrow().fields
-            ),
+            Value::Object(o) => write!(f, "{:?}", o.borrow().fields),
             Value::None => write!(f, "None"),
         }
     }
 }
 
-pub fn type_of(value: &Value) -> &'static str {
-    match value {
-        Value::Alias(..) => "Alias",
-        Value::Number(..) => "Number",
-        Value::Boolean(..) => "Boolean",
-        Value::List(..) => "List",
-        Value::Function(..) => "Function",
-        Value::Builtin(..) => "Function",
-        Value::String(..) => "String",
-        Value::Object(..) => "Object",
-        Value::None => "None",
+impl Value {
+    pub fn type_of(&self) -> &'static str {
+        match self {
+            Value::Number(..) => "Number",
+            Value::Boolean(..) => "Boolean",
+            Value::List(..) => "List",
+            Value::Function(..) => "Function",
+            Value::Builtin(..) => "Function",
+            Value::String(..) => "String",
+            Value::Object(..) => "Object",
+            Value::None => "None",
+        }
     }
 }
 
 pub fn type_error(expected: impl Into<String>, found: &Value) -> TLError {
-    let found = type_of(found);
+    let found = found.type_of();
     TLError::TypeMismatch(expected.into(), found.to_string())
 }
 
-pub fn init_engine() -> Engine {
-    let mut engine = Engine::new();
+pub fn init_engine(loader: impl ModuleLoader + 'static) -> Engine {
+    let mut engine = Engine::new(loader);
     engine.init().unwrap();
     engine
 }
@@ -109,6 +98,12 @@ pub type Ptr<T> = Rc<RefCell<T>>;
 
 pub fn ptr<T>(val: T) -> Ptr<T> {
     Rc::new(RefCell::new(val))
+}
+
+pub fn ref_eq<T>(a: impl Deref<Target = T>, b: impl Deref<Target = T>) -> bool {
+    let a = a.deref() as *const T;
+    let b = b.deref() as *const T;
+    a == b
 }
 
 pub type Str = Rc<str>;

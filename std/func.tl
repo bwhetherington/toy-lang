@@ -1,0 +1,1 @@
+pub let curry = (f, ...curried) => (...args) => f(...curried, ...args);

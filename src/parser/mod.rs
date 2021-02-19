@@ -6,5 +6,3 @@ pub use grammar::{
   parser::{expr, module},
   BinaryOp, Spread, UnaryOp,
 };
-
-pub type Program = Vec<DStatement>;

@@ -76,12 +76,14 @@ pub enum Statement {
     Definition(bool, String, Expression),
     Assignment(Expression, Expression),
     BinaryAssignment(BinaryOp, Expression, Expression),
-    Conditional(Expression, Vec<Statement>, Option<Vec<Statement>>),
+    Conditional(Expression, Box<Statement>, Option<Box<Statement>>),
     Return(Expression),
     Expression(Expression),
     Break,
-    Loop(Vec<Statement>),
-    While(Expression, Vec<Statement>),
+    Block(Vec<Statement>),
+    Loop(Box<Statement>),
+    While(Expression, Box<Statement>),
+    For(String, Expression, Box<Statement>),
 }
 
 parser!(pub grammar parser() for str {
@@ -90,11 +92,17 @@ parser!(pub grammar parser() for str {
     rule whitespace()
         = quiet! { [' ' | '\t' | '\r' | '\n'] }
 
+    rule comment()
+        = "/*" (!("*/")[_])* "*/"
+        / "//" (!['\n'][_])*
+
     rule _()
-        = whitespace()*
+        = whitespace()* comment() whitespace()*
+        / whitespace()*
 
     rule __()
-        = whitespace()+
+        = whitespace()* comment() whitespace()*
+        / whitespace()+
 
     rule string_content() -> &'input str
         = $((!['"'][_])*)
@@ -105,6 +113,7 @@ parser!(pub grammar parser() for str {
 
     rule digit() -> &'input str
         = n:$(['0'..='9']) { n }
+        / expected!("digit")
 
     rule int() -> i32
         = n:$(['+' | '-']? digit()+) { n.parse().unwrap() }
@@ -167,7 +176,7 @@ parser!(pub grammar parser() for str {
         / expected!("parameters")
 
     rule lambda_body() -> LambdaBody
-        = b:body() { LambdaBody::Block(b) }
+        = b:body_content() { LambdaBody::Block(b) }
         / e:expr() { LambdaBody::Expression(Box::new(e)) }
 
     rule lambda() -> Expression
@@ -203,6 +212,16 @@ parser!(pub grammar parser() for str {
     rule arithmetic() -> Expression = precedence! {
         e:lambda() { e }
         --
+        x:(@) _ "==" _ y:@ { binary(BinaryOp::Equals, x, y) }
+        x:(@) _ "!=" _ y:@ { binary(BinaryOp::NotEquals, x, y) }
+        x:(@) _ ">" _ y:@ { binary(BinaryOp::GT, x, y) }
+        x:(@) _ ">=" _ y:@ { binary(BinaryOp::GTE, x, y) }
+        x:(@) _ "<" _ y:@ { binary(BinaryOp::LT, x, y) }
+        x:(@) _ "<=" _ y:@ { binary(BinaryOp::LTE, x, y) }
+        --
+        x:(@) _ "&&" _ y:@ { binary(BinaryOp::LogicAnd, x, y) }
+        x:(@) _ "||" _ y:@ { binary(BinaryOp::LogicOr, x, y) }
+        --
         x:(@) _ "+" _ y:@ { binary(BinaryOp::Add, x, y) }
         x:(@) _ "-" _ y:@ { binary(BinaryOp::Subtract, x, y) }
         --
@@ -212,26 +231,15 @@ parser!(pub grammar parser() for str {
         --
         x:@ _ "^" _ y:(@) { binary(BinaryOp::Power, x, y) }
         --
-        x:(@) _ "==" _ y:@ { binary(BinaryOp::Equals, x, y) }
-        x:(@) _ "!=" _ y:@ { binary(BinaryOp::NotEquals, x, y) }
-        x:(@) _ ">" _ y:@ { binary(BinaryOp::GT, x, y) }
-        x:(@) _ ">=" _ y:@ { binary(BinaryOp::GTE, x, y) }
-        x:(@) _ "<" _ y:@ { binary(BinaryOp::LT, x, y) }
-        x:(@) _ "<=" _ y:@ { binary(BinaryOp::LTE, x, y) }
-        --
-        x:(@) _ "&&" _ y:@ { binary(BinaryOp::LogicAnd, x, y) }
-        --
-        x:(@) _ "||" _ y:@ { binary(BinaryOp::LogicOr, x, y) }
-        --
-        "!" _ x:atom() { unary(UnaryOp::Not, x) }
-        "-" _ x:atom() { unary(UnaryOp::Negative, x) }
-        --
         x:@ _ "[" _ y:(expr()) "]" { binary(BinaryOp::Index, x, y) }
         x:@ _ "." _ y:(identifier()) { Expression::Member(Box::new(x), y.to_string()) }
         x:@ _ l:arg_list() { Expression::Call(Box::new(x), l) }
         --
+        "!" _ x:@ { unary(UnaryOp::Not, x) }
+        "-" _ x:@ { unary(UnaryOp::Negative, x) }
+        --
         e:atom() { e }
-    }
+    } / expected!("operator")
 
     pub rule expr() -> Expression = precedence! {
         x:(@) _ "|>" _ y:@ { Expression::Pipe(Box::new(x), Box::new(y)) }
@@ -258,8 +266,11 @@ parser!(pub grammar parser() for str {
     rule statements() -> Vec<Statement>
         = s:statement() ** _ { s }
 
-    pub rule body() -> Vec<Statement>
+    rule body_content() -> Vec<Statement>
         = "{" _ s:statements() _ "}" { s }
+
+    pub rule body() -> Statement
+        = s:body_content() { Statement::Block(s) }
 
     rule definition() -> Statement
         = "let" __ i:identifier() _ "=" _ e:expr() _ ";" {
@@ -278,33 +289,39 @@ parser!(pub grammar parser() for str {
         = e:expr() _ ";" { Statement::Expression(e) }
 
     rule conditional() -> Statement
-        = "if" __ c:expr() __ then:body() _ "else" _ otherwise:body() {
+        = "if" __ c:expr() __ then:statement() _ "else" _ otherwise:statement() {
             Statement::Conditional(
                 c,
-                then,
-                Some(otherwise),
+                Box::new(then),
+                Some(Box::new(otherwise)),
             )
         }
-        / "if" __ c:expr() __ then:body() {
+        / "if" __ c:expr() __ then:statement() {
             Statement::Conditional(
-                c, then, None
+                c, Box::new(then), None
             )
         }
 
     rule function() -> Statement
-        = "func" __ i:to_string(<identifier()>) _ p:param_list() _ b:body() {
+        = "func" __ i:to_string(<identifier()>) _ p:param_list() _ b:body_content() {
             let (params, last) = p;
             Statement::Function(false, i, params, last, LambdaBody::Block(b))
         }
 
     rule loop_statement() -> Statement
-        = "loop" _ b:body() { Statement::Loop(b) }
+        = "loop" _ b:statement() { Statement::Loop(Box::new(b)) }
 
     rule while_statement() -> Statement
-        = "while" __  c:expr() __ b:body() { Statement::While(c, b) }
+        = "while" __  c:expr() __ b:statement() { Statement::While(c, Box::new(b)) }
+
+    rule for_statement() -> Statement
+        = "for" __ i:to_string(<identifier()>) __ "in" __ e:expr() _ s:statement() {
+            Statement::For(i, e, Box::new(s))
+        }
 
     rule statement_content() -> Statement
         = function()
+        / b:body()
         / conditional()
         / definition()
         / bin_assignment()
@@ -312,6 +329,7 @@ parser!(pub grammar parser() for str {
         / return_statement()
         / loop_statement()
         / while_statement()
+        / for_statement()
         / "break" _ ";" { Statement::Break }
         / expression_statement()
         / expected!("statement")
@@ -331,11 +349,12 @@ parser!(pub grammar parser() for str {
             }
         }
         / definition()
+        / assignment()
         / e:expr() _ ";" { Statement::Expression(e) }
 
     pub rule module() -> Vec<Statement>
         = _ s:module_decl() ** _ _ { s }
 
-    rule statement() -> Statement
+    pub rule statement() -> Statement
         = ";"* _ s:statement_content() _ ";"* { s }
 });

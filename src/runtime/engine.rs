@@ -1,18 +1,24 @@
+use crate::runtime::Ptr;
 use crate::{
-    common::{TLError, TLResult},
+    common::{Str, TLError, TLResult},
     module::ModuleLoader,
-    parser::{BinaryOp, DExpression, DField, DStatement, LValue, Program, Spread, UnaryOp},
+    parser::{
+        desugar_statements, module, BinaryOp, DExpression, DField, DStatement, LValue, Spread,
+        UnaryOp,
+    },
     runtime::{
-        builtin, env::Env, init_engine, ptr, type_error, Builtin, Function, IgnoreScope, Object,
-        Ptr, Scope, Value,
+        builtin, env::Env, ptr, ref_eq, type_error, BuiltinFn, Function, IgnoreScope, Init, Object,
+        Scope, Value,
     },
 };
-use std::rc::Rc;
+use std::{collections::HashMap, mem, rc::Rc};
 
 pub struct Engine {
     env: Env,
     ret_val: Value,
-    loader: Option<Box<dyn ModuleLoader>>,
+    loader: Box<dyn ModuleLoader>,
+    module_stack: Vec<Str>,
+    module_cache: HashMap<Str, Value>,
 }
 
 pub type EvalResult<T> = TLResult<T>;
@@ -36,35 +42,63 @@ impl Iterator for NoneIterator {
 }
 
 impl Engine {
-    pub fn new() -> Engine {
+    pub fn from_dyn_loader(loader: Box<dyn ModuleLoader>) -> Engine {
         let mut engine = Engine {
             env: Env::new(),
             ret_val: Value::None,
-            loader: None,
+            loader,
+            module_stack: Vec::new(),
+            module_cache: HashMap::new(),
         };
         engine.env.push();
         engine
     }
 
-    pub fn set_loader(&mut self, loader: Box<dyn ModuleLoader>) {
-        self.loader = Some(loader);
+    pub fn new(loader: impl ModuleLoader + 'static) -> Engine {
+        Engine::from_dyn_loader(Box::new(loader))
     }
 
-    pub fn import(&mut self, path: &str) -> TLResult<Value> {
-        let loader = self
-            .loader
-            .as_ref()
-            .map(Clone::clone)
-            .ok_or_else(|| TLError::ModuleNotFound(path.to_string()))?;
+    pub fn load_module(&mut self, path: &str) -> TLResult<Value> {
+        // Check if we have the module cached
+        let cached = self.module_cache.get(path);
+        match cached {
+            Some(val) => Ok(val.clone()),
+            None => {
+                // Store existing environment
+                let env = mem::replace(&mut self.env, Env::new());
+                self.env.push();
+                self.init()?;
 
-        let mut module_engine = init_engine();
-        module_engine.set_loader(loader.clone());
+                let path: Str = path.into();
 
-        let module = loader
-            .clone()
-            .load_module(path, &mut module_engine)?
-            .ok_or_else(|| TLError::ModuleNotFound(path.to_string()))?;
-        Ok(module)
+                // Check if we have circular dependency
+                if self.module_stack.iter().any(|existing| existing == &path) {
+                    return Err(TLError::CircularDependency);
+                }
+
+                self.module_stack.push(path.clone());
+
+                let contents = self
+                    .loader
+                    .load_module(path.as_ref())
+                    .ok_or_else(|| TLError::ModuleNotFound(path.as_ref().to_string()))?;
+
+                let stage_one = module(&contents)?;
+                let stage_two = desugar_statements(&stage_one)?;
+
+                let output = self.eval_module(&stage_two)?;
+
+                // Pop the module stack and save value
+                self.module_cache.insert(path.clone(), output.clone());
+                self.module_stack.pop();
+
+                // Reset environment
+                self.env = env;
+                self.loader.after_load_module();
+
+                Ok(output)
+            }
+        }
     }
 
     pub fn define(&mut self, name: impl Into<String>, val: Value) {
@@ -74,7 +108,7 @@ impl Engine {
     pub fn define_builtin(
         &mut self,
         name: impl Into<String>,
-        f: impl Fn(&[Value], &mut Engine) -> EvalResult<Value> + 'static,
+        f: impl Fn(&[Value], &mut Engine, Option<&Value>) -> EvalResult<Value> + 'static,
     ) {
         let f = builtin(f);
         self.define(name, f);
@@ -94,31 +128,24 @@ impl Engine {
 
     fn extract_statement_to(&self, stmt: &DStatement, map: &mut Scope, ignore: &mut IgnoreScope) {
         match stmt {
-            DStatement::Definition(is_pub, name, value) => {
-                ignore.insert(name);
-                self.extract_expr_to(value, map, ignore);
-            }
-            DStatement::Return(val) => self.extract_expr_to(val, map, ignore),
-            DStatement::Assignment(_, val) => self.extract_expr_to(val, map, ignore),
-            DStatement::Loop(body) => {
+            DStatement::Block(body) => {
                 ignore.push();
                 for stmt in body {
                     self.extract_statement_to(stmt, map, ignore);
                 }
                 ignore.pop();
             }
+            DStatement::Definition(_, name, value) => {
+                ignore.insert(name);
+                self.extract_expr_to(value, map, ignore);
+            }
+            DStatement::Return(val) => self.extract_expr_to(val, map, ignore),
+            DStatement::Assignment(_, val) => self.extract_expr_to(val, map, ignore),
+            DStatement::Loop(body) => self.extract_statement_to(body.as_ref(), map, ignore),
             DStatement::Conditional(cond, then, otherwise) => {
                 self.extract_expr_to(cond, map, ignore);
-                ignore.push();
-                for stmt in then {
-                    self.extract_statement_to(stmt, map, ignore);
-                }
-                ignore.pop();
-                ignore.push();
-                for stmt in otherwise {
-                    self.extract_statement_to(stmt, map, ignore);
-                }
-                ignore.pop();
+                self.extract_statement_to(then, map, ignore);
+                self.extract_statement_to(otherwise, map, ignore);
             }
             DStatement::Expression(expr) => self.extract_expr_to(expr, map, ignore),
             DStatement::Break => (),
@@ -202,6 +229,17 @@ impl Engine {
         }
     }
 
+    fn iterate_value(&mut self, val: &Value, f: impl Fn(&Value) -> TLResult<()>) -> TLResult<()> {
+        let iter = self.eval_method(val, "iter", &[])?;
+        loop {
+            match self.eval_method(&iter, "next", &[])? {
+                Value::None => break,
+                other => f(&other)?,
+            }
+        }
+        Ok(())
+    }
+
     fn eval_unary(&mut self, op: UnaryOp, val: &DExpression) -> EvalResult<Value> {
         use UnaryOp::*;
         use Value::*;
@@ -210,7 +248,24 @@ impl Engine {
         match (op, val) {
             (Negative, Number(x)) => Ok(Number(-x)),
             (Not, Boolean(b)) => Ok(Boolean(!b)),
-            _ => todo!(),
+            (op, other) => {
+                println!("{:?}, {:?}", op, other.type_of());
+                todo!()
+            }
+        }
+    }
+
+    fn eval_equals(&self, a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::Boolean(a), Value::Boolean(b)) => a == b,
+            (Value::String(a), Value::String(b)) => ref_eq(a, b),
+            (Value::Function(a), Value::Function(b)) => ref_eq(a.as_ref(), b.as_ref()),
+            (Value::Builtin(a), Value::Builtin(b)) => ref_eq(a.as_ref(), b.as_ref()),
+            (Value::List(a), Value::List(b)) => ref_eq(a.borrow(), b.borrow()),
+            (Value::Object(a), Value::Object(b)) => ref_eq(a.borrow(), b.borrow()),
+            (Value::None, Value::None) => true,
+            (_, _) => false,
         }
     }
 
@@ -223,30 +278,92 @@ impl Engine {
         use BinaryOp::*;
         use Value::*;
 
-        let lhs = self.eval_expr(lhs)?;
-        let rhs = self.eval_expr(rhs)?;
+        let lhs = self.eval_expr(lhs);
+        let rhs = self.eval_expr(rhs);
         match (op, lhs, rhs) {
-            (Add, Number(x), Number(y)) => Ok(Number(x + y)),
-            (Subtract, Number(x), Number(y)) => Ok(Number(x - y)),
-            (Multiply, Number(x), Number(y)) => Ok(Number(x * y)),
-            (Divide, Number(x), Number(y)) => Ok(Number(x / y)),
-            (Mod, Number(x), Number(y)) => Ok(Number(x % y)),
-            (Power, Number(x), Number(y)) => Ok(Number(x.powf(y))),
-            (Equals, Number(x), Number(y)) => Ok(Boolean(x == y)),
-            (NotEquals, Number(x), Number(y)) => Ok(Boolean(x != y)),
-            (GT, Number(x), Number(y)) => Ok(Boolean(x > y)),
-            (GTE, Number(x), Number(y)) => Ok(Boolean(x >= y)),
-            (LT, Number(x), Number(y)) => Ok(Boolean(x < y)),
-            (LTE, Number(x), Number(y)) => Ok(Boolean(x <= y)),
-            (Index, List(l), Number(i)) => l
-                .borrow()
-                .get(i as usize)
-                .cloned()
-                .ok_or_else(|| TLError::OutOfBounds(i as usize)),
-            other => {
-                dbg!(other);
-                todo!()
+            (op, Ok(lhs), Ok(rhs)) => match (op, lhs, rhs) {
+                (Add, Number(x), Number(y)) => Ok(Number(x + y)),
+                (Subtract, Number(x), Number(y)) => Ok(Number(x - y)),
+                (Multiply, Number(x), Number(y)) => Ok(Number(x * y)),
+                (Divide, Number(x), Number(y)) => Ok(Number(x / y)),
+                (Mod, Number(x), Number(y)) => Ok(Number(x % y)),
+                (Power, Number(x), Number(y)) => Ok(Number(x.powf(y))),
+                (GT, Number(x), Number(y)) => Ok(Boolean(x > y)),
+                (GTE, Number(x), Number(y)) => Ok(Boolean(x >= y)),
+                (LT, Number(x), Number(y)) => Ok(Boolean(x < y)),
+                (LTE, Number(x), Number(y)) => Ok(Boolean(x <= y)),
+                (Index, List(l), Number(i)) => l
+                    .borrow()
+                    .get(i as usize)
+                    .cloned()
+                    .ok_or_else(|| TLError::OutOfBounds(i as usize)),
+                (Equals, x, y) => Ok(Boolean(self.eval_equals(&x, &y))),
+                (NotEquals, x, y) => Ok(Boolean(!self.eval_equals(&x, &y))),
+                (LogicOr, Boolean(x), Boolean(y)) => Ok(Boolean(x || y)),
+                (LogicAnd, Boolean(x), Boolean(y)) => Ok(Boolean(x && y)),
+                (op, lhs, rhs) => Err(TLError::Syntax(format!(
+                    "{:?} {:?} {:?} is not supported",
+                    op, lhs, rhs
+                ))),
+            },
+            (LogicOr, Ok(Boolean(true)), _) | (LogicOr, _, Ok(Boolean(true))) => Ok(Boolean(true)),
+            (LogicAnd, Ok(Boolean(false)), _) | (LogicAnd, _, Ok(Boolean(false))) => {
+                Ok(Boolean(false))
             }
+            (_, Err(e), _) | (_, _, Err(e)) => Err(e),
+        }
+    }
+
+    fn get_list_proto(&self) -> TLResult<Ptr<Object>> {
+        match self.lookup("List")? {
+            Value::Object(obj) => Ok(obj.clone()),
+            other => Err(type_error("Object", other)),
+        }
+    }
+
+    fn eval_method(&mut self, obj: &Value, method: &str, args: &[Value]) -> TLResult<Value> {
+        let obj = match obj {
+            Value::Object(obj) => {
+                let obj = obj.clone();
+                Ok(obj)
+            }
+            Value::List(..) => {
+                let obj = self.get_list_proto()?;
+                Ok(obj)
+            }
+            other => Err(type_error("Object", &other)),
+        }?;
+        let val = obj.borrow().get(method).unwrap_or_else(|| Value::None);
+        self.call_internal(&val, args)
+    }
+
+    fn eval_member(&mut self, obj: &DExpression, field: &str) -> TLResult<Value> {
+        let parent = self.eval_expr(obj)?;
+        let obj = match &parent {
+            Value::Object(obj) => {
+                let obj = obj.clone();
+                Ok(obj)
+            }
+            Value::List(..) => {
+                let obj = self.get_list_proto()?;
+                Ok(obj)
+            }
+            other => Err(type_error("Object", &other)),
+        }?;
+
+        let val = obj.borrow().get(field).unwrap_or_else(|| Value::None);
+        match val {
+            Value::Function(f) => {
+                let mut new_f = f.as_ref().clone();
+                new_f.self_value = Some(parent.clone());
+                Ok(Value::Function(Rc::new(new_f)))
+            }
+            Value::Builtin(f) => {
+                let mut new_f = f.as_ref().clone();
+                new_f.self_value = Some(parent.clone());
+                Ok(Value::Builtin(Rc::new(new_f)))
+            }
+            other => Ok(other),
         }
     }
 
@@ -281,6 +398,89 @@ impl Engine {
         Ok(out)
     }
 
+    fn call_internal(&mut self, f: &Value, args: &[Value]) -> EvalResult<Value> {
+        match f {
+            Value::Function(f) => self.call_function(f.as_ref(), args),
+            Value::Builtin(f) => self.call_builtin(f.as_ref(), args),
+            other => Err(type_error("Function", &other)),
+        }
+    }
+
+    fn call(&mut self, f: &Value, args: &[Spread<DExpression>]) -> EvalResult<Value> {
+        let args = self.eval_spread_list(args)?;
+        self.call_internal(f, &args)
+    }
+
+    fn call_builtin(&mut self, f: &BuiltinFn, args: &[Value]) -> EvalResult<Value> {
+        self.env.push();
+        let BuiltinFn { self_value, func } = f;
+        let self_value = self_value.as_ref();
+        let val = func(&args, self, self_value)?;
+        self.env.pop();
+        self.ret_val = val.clone();
+        Ok(val)
+    }
+
+    fn call_function(&mut self, f: &Function, args: &[Value]) -> EvalResult<Value> {
+        let Function {
+            self_value,
+            params,
+            last,
+            body,
+            closure,
+        } = f;
+        let args_iter = args.iter().map(Clone::clone).chain(NoneIterator);
+
+        self.env.push();
+
+        // Insert self
+        if let Some(self_value) = self_value {
+            self.env.insert("self", self_value.clone());
+
+            if let Value::Object(obj) = self_value {
+                if let Some(super_value) = obj.borrow().super_proto() {
+                    self.env.insert("super", Value::Object(super_value));
+                }
+            }
+        }
+
+        // Insert arguments at parameters
+        let param_pairs = params.iter().zip(args_iter);
+        for (param, arg) in param_pairs {
+            self.env.insert(param, arg.clone());
+        }
+
+        // Insert any remaining parameters into a list
+        if let Some(last) = last {
+            // Check if there are any remaining arguments
+            let rest = if args.len() >= params.len() {
+                let rest = &args[params.len()..];
+                let rest: Vec<_> = rest.iter().map(Clone::clone).collect();
+                rest
+            } else {
+                vec![]
+            };
+            let rest = Value::List(ptr(rest));
+            self.env.insert(last, rest);
+        }
+
+        // Insert variables from closure
+        for (key, value) in closure {
+            self.env.insert(key, value.clone());
+        }
+
+        let end = self.eval_block(EngineState::Run, &body)?;
+        let val = if let EngineState::Return = end {
+            self.ret_val.clone()
+        } else {
+            Value::None
+        };
+
+        self.env.pop();
+
+        Ok(val)
+    }
+
     pub fn eval_expr(&mut self, expr: &DExpression) -> EvalResult<Value> {
         // println!("eval {:?}", expr);
         match expr {
@@ -300,81 +500,7 @@ impl Engine {
             DExpression::String(s) => Ok(Value::String(s.to_string().into())),
             DExpression::Call(f, args) => {
                 let f = self.eval_expr(f)?;
-                match f {
-                    Value::Function(f) => {
-                        let Function {
-                            self_value,
-                            params,
-                            last,
-                            body,
-                            closure,
-                        } = f.as_ref();
-                        let args = self.eval_spread_list(args)?;
-                        let args_iter = args.iter().map(Clone::clone).chain(NoneIterator);
-
-                        self.env.push();
-
-                        // Insert self
-                        if let Some(self_value) = self_value {
-                            self.env.insert("self", self_value.clone());
-
-                            if let Value::Object(obj) = self_value {
-                                if let Some(super_value) = obj.borrow().super_proto() {
-                                    self.env.insert("super", Value::Object(super_value));
-                                }
-                            }
-                        }
-
-                        // Insert arguments at parameters
-                        let param_pairs = params.iter().zip(args_iter);
-                        for (param, arg) in param_pairs {
-                            self.env.insert(param, arg.clone());
-                        }
-
-                        // Insert any remaining parameters into a list
-                        if let Some(last) = last {
-                            // Check if there are any remaining arguments
-                            let rest = if args.len() >= params.len() {
-                                let rest = &args[params.len()..];
-                                let rest: Vec<_> = rest.iter().map(Clone::clone).collect();
-                                rest
-                            } else {
-                                vec![]
-                            };
-                            let rest = Value::List(ptr(rest));
-                            self.env.insert(last, rest);
-                        }
-
-                        // Insert variables from closure
-                        for (key, value) in closure {
-                            self.env.insert(key, value.clone());
-                        }
-
-                        let end = self.eval_block(EngineState::Run, &body)?;
-                        let val = if let EngineState::Return = end {
-                            self.ret_val.clone()
-                        } else {
-                            Value::None
-                        };
-
-                        self.env.pop();
-
-                        Ok(val)
-                    }
-                    Value::Builtin(Builtin(f)) => {
-                        self.env.push();
-                        let args = self.eval_spread_list(args)?;
-                        let val = f(&args, self)?;
-                        self.env.pop();
-                        self.ret_val = val.clone();
-
-                        Ok(val)
-                    }
-                    other => {
-                        println!("call: {:?}", other);
-                        todo!()
-                    }
-                }
+                self.call(&f, args)
             }
             DExpression::Object(fields) => {
                 let mut obj = Object::new();
@@ -386,24 +512,7 @@ impl Engine {
 
                 Ok(Value::Object(ptr(obj)))
             }
-            DExpression::Member(obj, field) => {
-                let parent = self.eval_expr(obj)?;
-                match &parent {
-                    Value::Object(obj) => {
-                        let obj = obj.borrow();
-                        let val = obj.get(field).unwrap_or_else(|| Value::None);
-                        match val {
-                            Value::Function(f) => {
-                                let mut new_f = f.as_ref().clone();
-                                new_f.self_value = Some(parent.clone());
-                                Ok(Value::Function(Rc::new(new_f)))
-                            }
-                            other => Ok(other),
-                        }
-                    }
-                    other => Err(type_error("Object", &other)),
-                }
-            }
+            DExpression::Member(obj, field) => self.eval_member(obj, field),
         }
     }
 
@@ -485,6 +594,12 @@ impl Engine {
     ) -> EvalResult<EngineState> {
         // println!("exe {:?}", stmt);
         match stmt {
+            DStatement::Block(body) => {
+                self.env.push();
+                let next_state = self.eval_block(state, body.as_ref())?;
+                self.env.pop();
+                Ok(next_state)
+            }
             DStatement::Expression(expr) => {
                 self.eval_expr(expr)?;
                 Ok(state)
@@ -495,12 +610,12 @@ impl Engine {
                     Value::Boolean(b) => {
                         if b {
                             self.env.push();
-                            let state = self.eval_block(state, then)?;
+                            let state = self.eval_stmt(state, then.as_ref(), None)?;
                             self.env.pop();
                             Ok(state)
                         } else {
                             self.env.push();
-                            let state = self.eval_block(state, otherwise)?;
+                            let state = self.eval_stmt(state, otherwise.as_ref(), None)?;
                             self.env.pop();
                             Ok(state)
                         }
@@ -538,7 +653,7 @@ impl Engine {
             DStatement::Loop(body) => {
                 loop {
                     self.env.push();
-                    let next_state = self.eval_block(state, body)?;
+                    let next_state = self.eval_stmt(state, body.as_ref(), None)?;
                     self.env.pop();
                     match next_state {
                         EngineState::Break => break,
@@ -551,11 +666,22 @@ impl Engine {
         }
     }
 
-    pub fn eval_program(&mut self, body: &Program) -> EvalResult<()> {
-        // Run program
-        for stmt in body {
-            self.eval_stmt(EngineState::Run, stmt, None)?;
+    pub fn run_module(&mut self, src: &str) -> EvalResult<()> {
+        let res = self.load_module(src)?;
+        match res {
+            Value::Object(obj) => match obj.borrow().get("main") {
+                Some(main_fn) => {
+                    self.call(&main_fn, &[])?;
+                }
+                _ => (),
+            },
+            _ => (),
         }
         Ok(())
+    }
+
+    pub fn print_error(&self, err: &TLError) {
+        eprintln!("{}", err);
+        println!("{:#?}", self.module_stack);
     }
 }

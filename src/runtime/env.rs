@@ -1,4 +1,4 @@
-use crate::runtime::{BuiltinFn, Scope, Value};
+use crate::runtime::{Scope, Value};
 use std::collections::HashMap;
 
 #[derive(Debug)]

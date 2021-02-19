@@ -2,53 +2,60 @@ mod common;
 mod module;
 mod parser;
 mod runtime;
-mod util;
 
 use std::error;
-use std::fs;
 use std::io::{self, prelude::*};
 
 use crate::{
     common::{TLError, TLResult},
-    module::{CacheLoader, FileLoader},
-    runtime::{ptr, Engine},
+    module::FileLoader,
+    parser::DStatement,
+    runtime::{Engine, EngineState},
 };
 
 fn eval_line(line: &str, engine: &mut Engine) -> Result<(), TLError> {
     let parsed = crate::parser::grammar::parser::expr(&line)?;
     let body = crate::parser::desugar::desugar_expression(&parsed)?;
     let res = engine.eval_expr(&body)?;
-    println!("<- {:?}", res);
+    println!("{:?}", res);
     Ok(())
 }
 
-fn repl(engine: &mut Engine) -> Result<(), Box<dyn error::Error>> {
-    println!("TL REPL v0.1");
-    let stdin = io::stdin();
-    print!("=> ");
-    io::stdout().flush()?;
-    for line in stdin.lock().lines() {
-        let line = line?;
-        if let Err(e) = eval_line(line.trim(), engine) {
-            println!("{}", e);
-        }
-        print!("=> ");
-        io::stdout().flush()?;
-        io::stdout().flush()?;
+fn execute_line(line: &str, engine: &mut Engine) -> Result<(), TLError> {
+    use std::convert::TryFrom;
+    let parsed = crate::parser::grammar::parser::statement(&format!("{};", line))?;
+    let body = DStatement::try_from(&parsed)?;
+    engine.eval_stmt(EngineState::Run, &body, None)?;
+    Ok(())
+}
+
+fn process_line(line: &str, engine: &mut Engine) -> Result<(), TLError> {
+    let try_expr = eval_line(line, engine);
+    if try_expr.is_err() {
+        execute_line(line, engine)?;
     }
     Ok(())
 }
 
-fn run(input: &str) -> Result<(), Box<dyn error::Error>> {
-    let res = crate::parser::grammar::parser::module(&input)?;
-    let body = crate::parser::desugar::desugar_statements(&res)?;
-    // println!("{:#?}", body);
+fn repl(engine: &mut Engine) -> TLResult<()> {
+    println!("TL REPL v0.1");
+    let stdin = io::stdin();
+    print!("> ");
+    io::stdout().flush().unwrap();
+    for line in stdin.lock().lines() {
+        let line = line.unwrap();
+        if let Err(e) = process_line(line.trim(), engine) {
+            println!("{}", e);
+        }
+        print!("> ");
+        io::stdout().flush().unwrap();
+    }
+    Ok(())
+}
 
-    let mut engine = crate::runtime::init_engine();
-    engine.set_loader(Box::new(CacheLoader::new(FileLoader)));
-
-    engine.eval_program(&body)?;
-    repl(&mut engine)?;
+fn run(engine: &mut Engine, src: &str) -> TLResult<()> {
+    engine.run_module(src)?;
+    repl(engine)?;
 
     Ok(())
 }
@@ -59,9 +66,12 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .next()
         .unwrap_or_else(|| "test.txt".to_string());
 
-    let input = fs::read_to_string(file)?;
+    let mut engine = crate::runtime::init_engine(FileLoader::new());
 
-    run(&input)?;
+    match run(&mut engine, &file) {
+        Err(e) => engine.print_error(&e),
+        _ => (),
+    }
 
     // match run(&input) {
     //     Err(err @ TLError::Parse { .. }) => crate::util::print_with_error(&input, &err),

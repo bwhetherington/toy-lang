@@ -20,6 +20,7 @@ pub enum TLError {
     TypeMismatch(String, String),
     OutOfBounds(usize),
     ModuleNotFound(String),
+    CircularDependency,
     Parse {
         desc: String,
         line: usize,

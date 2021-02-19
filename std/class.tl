@@ -1,8 +1,6 @@
-pub let create_class = (Base) => create_object({
-  create: () => {
-    let obj = create_object(Base, {});
-    return obj;
-  },
+pub let define = (Base) => create_object({
+  create: () => create_object(self, {}),
+  init: () => {},
   new: (...args) => {
     let instance = self.create();
     instance.init(...args);
@@ -10,16 +8,9 @@ pub let create_class = (Base) => create_object({
   },
 }, Base);
 
-pub let extend_class = (Base, Class) => create_object(Class, {
+pub let extend = (Base, Class) => define(create_object(Class, {
   create: () => {
-    let base_obj = Base.create();
-    let next = create_object(base_obj, Class);
-    let instance = create_object(next, {});
-    return instance;
+    let base_instance = create_object(Base.create(), Class);
+    return create_object(base_instance, {});
   },
-  new: (...args) => {
-    let instance = self.create();
-    instance.init(...args);
-    return instance;
-  },
-});
+}));

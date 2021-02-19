@@ -1,5 +1,7 @@
 mod file;
 mod module;
+mod resolve;
 
 pub use file::FileLoader;
-pub use module::{CacheLoader, ModuleLoader};
+pub use module::ModuleLoader;
+pub use resolve::{ModulePath, PackageType};
