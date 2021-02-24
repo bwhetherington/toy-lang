@@ -1,6 +1,6 @@
 let iter = import("std/iter.tl");
 
-pub func square_list(list) {
+pub fn square_list(list) {
   let new_list = [];
   let i = iter.list(list)
     .map((x) => x^2);

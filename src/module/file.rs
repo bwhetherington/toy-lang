@@ -2,6 +2,7 @@ use crate::module::{ModuleLoader, ModulePath, PackageType};
 use std::{
     fs,
     path::{Path, PathBuf},
+    env,
 };
 
 #[derive(Clone, Debug)]
@@ -11,6 +12,7 @@ pub struct FileLoader {
 
 impl ModuleLoader for FileLoader {
     fn load_module(&mut self, path: &str) -> Option<String> {
+        println!("load_module {}", path);
         let path = ModulePath::resolve(path);
         let path = self.resolve_path(&path)?;
         let res = fs::read_to_string(&path).ok();
@@ -38,7 +40,8 @@ impl FileLoader {
             },
             PackageType::Imported => {
                 // Module location
-                let module_location = Path::new("/home/bwh/toy-lang").to_path_buf();
+                let module_home = env::var("TL_HOME").ok()?;
+                let module_location = Path::new(&module_home).to_path_buf();
                 Some(module_location)
             }
         }

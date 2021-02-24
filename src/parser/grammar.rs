@@ -273,11 +273,11 @@ parser!(pub grammar parser() for str {
         = s:body_content() { Statement::Block(s) }
 
     rule definition() -> Statement
-        = "let" __ i:identifier() _ "=" _ e:expr() _ ";" {
+        = "let" __ name:to_string(<identifier()>) _ "=" _ value:expr() _ ";" {
             Statement::Definition(
                 false,
-                i.to_string(),
-                e,
+                name,
+                value,
             )
         }
 
@@ -303,7 +303,7 @@ parser!(pub grammar parser() for str {
         }
 
     rule function() -> Statement
-        = "func" __ i:to_string(<identifier()>) _ p:param_list() _ b:body_content() {
+        = "fn" __ i:to_string(<identifier()>) _ p:param_list() _ b:body_content() {
             let (params, last) = p;
             Statement::Function(false, i, params, last, LambdaBody::Block(b))
         }
