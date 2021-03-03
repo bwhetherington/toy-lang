@@ -280,11 +280,11 @@ parser!(pub grammar parser() for str {
         = s:body_content() { Statement::Block(s) }
 
     rule definition() -> Statement
-        = "let" __ i:identifier() _ "=" _ e:expr() _ ";" {
+        = "let" __ name:to_string(<identifier()>) _ "=" _ value:expr() _ ";" {
             Statement::Definition(
                 false,
-                i.to_string(),
-                e,
+                name,
+                value,
             )
         }
 
