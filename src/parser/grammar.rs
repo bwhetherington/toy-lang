@@ -193,6 +193,13 @@ parser!(pub grammar parser() for str {
                 value: v,
             }
         }
+        / f:identifier() _ p:param_list() _ b:body_content() {
+            let (params, last) = p;
+            Field {
+                name: f.to_string(),
+                value: Expression::Lambda(params, last, LambdaBody::Block(b))
+            }
+        }
 
     rule object() -> Expression
         = f:enclosed_list("{", "}", <field_decl()>) { Expression::Object(f) }
@@ -303,7 +310,7 @@ parser!(pub grammar parser() for str {
         }
 
     rule function() -> Statement
-        = "func" __ i:to_string(<identifier()>) _ p:param_list() _ b:body_content() {
+        = "fn" __ i:to_string(<identifier()>) _ p:param_list() _ b:body_content() {
             let (params, last) = p;
             Statement::Function(false, i, params, last, LambdaBody::Block(b))
         }

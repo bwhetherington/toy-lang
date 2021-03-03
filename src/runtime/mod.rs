@@ -45,7 +45,7 @@ pub enum Value {
     Number(f64),
     Boolean(bool),
     List(Ptr<Vec<Value>>),
-    Function(Rc<Function>),
+    Function(Ptr<Function>),
     Builtin(Rc<BuiltinFn>),
     String(Str),
     Object(Ptr<Object>),

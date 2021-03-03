@@ -354,9 +354,9 @@ impl Engine {
         let val = obj.borrow().get(field).unwrap_or_else(|| Value::None);
         match val {
             Value::Function(f) => {
-                let mut new_f = f.as_ref().clone();
+                let mut new_f = f.borrow().clone();
                 new_f.self_value = Some(parent.clone());
-                Ok(Value::Function(Rc::new(new_f)))
+                Ok(Value::Function(ptr(new_f)))
             }
             Value::Builtin(f) => {
                 let mut new_f = f.as_ref().clone();
@@ -400,9 +400,12 @@ impl Engine {
 
     fn call_internal(&mut self, f: &Value, args: &[Value]) -> EvalResult<Value> {
         match f {
-            Value::Function(f) => self.call_function(f.as_ref(), args),
+            Value::Function(f) => self.call_function(&f.borrow(), args),
             Value::Builtin(f) => self.call_builtin(f.as_ref(), args),
-            other => Err(type_error("Function", &other)),
+            other => {
+                println!("function: {:?}", other);
+                Err(type_error("Function", &other))
+            }
         }
     }
 
@@ -494,8 +497,8 @@ impl Engine {
             }
             DExpression::Unary(op, val) => self.eval_unary(*op, val),
             DExpression::Binary(op, lhs, rhs) => self.eval_binary(*op, lhs, rhs),
-            DExpression::Lambda(params, last, body) => Ok(Value::Function(Rc::new(
-                self.create_closure(params, last, body),
+            DExpression::Lambda(params, last, body) => Ok(Value::Function(ptr(
+                self.create_closure(params, last, body)
             ))),
             DExpression::String(s) => Ok(Value::String(s.to_string().into())),
             DExpression::Call(f, args) => {
@@ -633,6 +636,17 @@ impl Engine {
             }
             DStatement::Definition(is_pub, name, value) => {
                 let value = self.eval_expr(value)?;
+
+                match &value {
+                    Value::Function(f) => {
+                        let mut f = f.borrow_mut();
+                        if !f.closure.contains_key(name) {
+                            f.closure.insert(name.clone(), value.clone());
+                        }
+                    }
+                    _ => (),
+                }
+
                 if *is_pub {
                     if let Some(export) = export {
                         export.insert(name, value.clone());

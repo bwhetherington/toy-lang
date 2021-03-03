@@ -53,8 +53,10 @@ fn repl(engine: &mut Engine) -> TLResult<()> {
     Ok(())
 }
 
-fn run(engine: &mut Engine, src: &str) -> TLResult<()> {
-    engine.run_module(src)?;
+fn run(engine: &mut Engine, src: &Option<String>) -> TLResult<()> {
+    if let Some(src) = src {
+        engine.run_module(src)?;
+    }
     repl(engine)?;
 
     Ok(())
@@ -63,8 +65,7 @@ fn run(engine: &mut Engine, src: &str) -> TLResult<()> {
 fn main() -> Result<(), Box<dyn error::Error>> {
     let file = std::env::args()
         .skip(1)
-        .next()
-        .unwrap_or_else(|| "test.txt".to_string());
+        .next();
 
     let mut engine = crate::runtime::init_engine(FileLoader::new());
 

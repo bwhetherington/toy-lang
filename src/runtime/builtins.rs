@@ -38,7 +38,7 @@ fn create_list_proto() -> Value {
                 for arg in args {
                     l.push(arg.clone());
                 }
-                Ok(Value::Number(0f64))
+                Ok(Value::None)
             }
             Some(other) => Err(type_error("List", other)),
             None => Err(type_error("List", &Value::None)),
@@ -86,10 +86,7 @@ impl Init for Engine {
                 let obj = crate::runtime::Object::from_proto(proto.clone(), &new.borrow());
                 Ok(Object(ptr(obj)))
             }
-            [a @ Object(..), b, ..] => {
-                println!("{:?} {:?}", a, b);
-                Err(type_error("Object", &b))
-            }
+            [a @ Object(..), b, ..] => Err(type_error("Object", &b)),
             [a, ..] => Err(type_error("Object", &a)),
             [] => Err(type_error("Object", &Value::None)),
         });

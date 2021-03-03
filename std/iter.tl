@@ -1,17 +1,21 @@
 let class = import("./class.tl");
 
 pub let Iterator = class.define({
-  next: () => None,
-  iter: () => self,
+  next() {
+    return None,
+  },
+  iter() {
+    return self;
+  },
 });
 
 pub let Range = class.extend(Iterator, {
-  init: (from, to) => {
+  init(from, to) {
     super.init();
     self._from = from;
     self._to = to;
   },
-  next: () => {
+  next() {
     if self._from < self._to {
       let i = self._from;
       self._from += 1;
@@ -21,11 +25,11 @@ pub let Range = class.extend(Iterator, {
 });
 
 let Filter = class.extend(Iterator, {
-  init: (base, pred) => {
+  init(base, pred) {
     self._base = base;
     self._pred = pred;
   },
-  next: () => {
+  next() {
     let val = self._base.next();
     while !((val == None) || self._pred(val)) {
       val = self._base.next();
@@ -35,12 +39,12 @@ let Filter = class.extend(Iterator, {
 });
 
 let Map = class.extend(Iterator, {
-  init: (base, fn) => {
+  init(base, fn) {
     super.init();
     self._base = base;
     self._fn = fn;
   },
-  next: () => {
+  next() {
     let val = self._base.next();
     if val != None {
       return self._fn(val);
@@ -51,4 +55,4 @@ let Map = class.extend(Iterator, {
 Iterator.filter = (f) => Filter.new(self, f);
 Iterator.map = (f) => Map.new(self, f);
 
-pub let list = (list) => Range.new(0, list.len()).map((i) => list[i]);
+pub let list = (xs) => Range.new(0, xs.len()).map((i) => xs[i]);
