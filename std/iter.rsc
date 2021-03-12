@@ -1,11 +1,16 @@
-let class = import("./class.tl");
+let class = import("./class.rsc");
 
 pub let Iterator = class.define({
   next() {
-    return None,
+    return None;
   },
   iter() {
     return self;
+  },
+  for_each(f) {
+    for x in self {
+      f(x);
+    }
   },
 });
 
@@ -31,7 +36,8 @@ let Filter = class.extend(Iterator, {
   },
   next() {
     let val = self._base.next();
-    while !((val == None) || self._pred(val)) {
+    let cond = !((val == None) || self._pred(val));
+    while cond {
       val = self._base.next();
     }
     return val;
@@ -39,15 +45,15 @@ let Filter = class.extend(Iterator, {
 });
 
 let Map = class.extend(Iterator, {
-  init(base, fn) {
+  init(base, f) {
     super.init();
     self._base = base;
-    self._fn = fn;
+    self._f = f;
   },
   next() {
     let val = self._base.next();
     if val != None {
-      return self._fn(val);
+      return self._f(val);
     }
   },
 });
@@ -55,4 +61,6 @@ let Map = class.extend(Iterator, {
 Iterator.filter = (f) => Filter.new(self, f);
 Iterator.map = (f) => Map.new(self, f);
 
-pub let list = (xs) => Range.new(0, xs.len()).map((i) => xs[i]);
+pub fn list(xs) {
+  return Range.new(0, xs.len()).map((i) => xs[i]);
+}

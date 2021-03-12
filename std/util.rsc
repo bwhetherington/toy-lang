@@ -1,6 +1,6 @@
-pub let class = import("./class.tl");
+pub let class = import("./class.rsc");
 
-pub func fib(n) {
+pub fn fib(n) {
   if n < 2 {
     return n;
   } else {

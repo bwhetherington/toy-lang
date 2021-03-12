@@ -314,6 +314,13 @@ impl Engine {
         }
     }
 
+    fn get_string_proto(&self) -> TLResult<Ptr<Object>> {
+        match self.lookup("String")? {
+            Value::Object(obj) => Ok(obj.clone()),
+            other => Err(type_error("Object", other)),
+        }
+    }
+
     fn get_list_proto(&self) -> TLResult<Ptr<Object>> {
         match self.lookup("List")? {
             Value::Object(obj) => Ok(obj.clone()),
@@ -331,6 +338,10 @@ impl Engine {
                 let obj = self.get_list_proto()?;
                 Ok(obj)
             }
+            Value::String(..) => {
+                let obj = self.get_string_proto()?;
+                Ok(obj)
+            }
             other => Err(type_error("Object", &other)),
         }?;
         let val = obj.borrow().get(method).unwrap_or_else(|| Value::None);
@@ -346,6 +357,10 @@ impl Engine {
             }
             Value::List(..) => {
                 let obj = self.get_list_proto()?;
+                Ok(obj)
+            }
+            Value::String(..) => {
+                let obj = self.get_string_proto()?;
                 Ok(obj)
             }
             other => Err(type_error("Object", &other)),

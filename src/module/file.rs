@@ -1,8 +1,7 @@
 use crate::module::{ModuleLoader, ModulePath, PackageType};
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
-    env,
 };
 
 #[derive(Clone, Debug)]
@@ -12,11 +11,11 @@ pub struct FileLoader {
 
 impl ModuleLoader for FileLoader {
     fn load_module(&mut self, path: &str) -> Option<String> {
-        println!("load_module {}", path);
         let path = ModulePath::resolve(path);
         let path = self.resolve_path(&path)?;
-        let res = fs::read_to_string(&path).ok();
-        self.file_stack.push(path.parent()?.to_owned());
+        let fixed_path = path.canonicalize().ok()?;
+        let res = fs::read_to_string(&fixed_path).ok();
+        self.file_stack.push(fixed_path.parent()?.to_owned());
         res
     }
 

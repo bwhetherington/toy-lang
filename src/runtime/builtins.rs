@@ -2,6 +2,7 @@ use crate::{
     common::TLError,
     runtime::{builtin, ptr, type_error, Engine, Object, Value},
 };
+use std::rc::Rc;
 
 pub trait Init {
     type Error;
@@ -16,6 +17,37 @@ fn unary_fn(
         [other, ..] => Err(type_error("Number", other)),
         [] => Err(type_error("Number", &Value::None)),
     }
+}
+
+fn create_string_proto() -> Value {
+    let mut obj = Object::new();
+
+    obj.insert(
+        "len",
+        builtin(|_, _, self_value| match self_value {
+            Some(Value::String(s)) => Ok(Value::Number(s.len() as f64)),
+            Some(other) => Err(type_error("String", other)),
+            None => Err(type_error("String", &Value::None)),
+        }),
+    );
+    obj.insert(
+        "lower",
+        builtin(|_, _, self_value| match self_value {
+            Some(Value::String(s)) => Ok(Value::String(s.to_lowercase().into())),
+            Some(other) => Err(type_error("String", other)),
+            None => Err(type_error("String", &Value::None)),
+        }),
+    );
+    obj.insert(
+        "upper",
+        builtin(|_, _, self_value| match self_value {
+            Some(Value::String(s)) => Ok(Value::String(s.to_uppercase().into())),
+            Some(other) => Err(type_error("String", other)),
+            None => Err(type_error("String", &Value::None)),
+        }),
+    );
+
+    Value::Object(ptr(obj))
 }
 
 fn create_list_proto() -> Value {
@@ -81,12 +113,33 @@ impl Init for Engine {
             Ok(Value::None)
         });
 
+        self.define_builtin("write_number", |args, _, _| match args {
+            [Value::Number(x)] => {
+                print!("{}", x);
+                Ok(Value::None)
+            }
+            _ => todo!(),
+        });
+
+        self.define_builtin("write_string", |args, _, _| match args {
+            [Value::String(s)] => {
+                print!("{}", s);
+                Ok(Value::None)
+            }
+            _ => todo!(),
+        });
+
+        self.define_builtin("write_newline", |_, _, _| {
+            println!("");
+            Ok(Value::None)
+        });
+
         self.define_builtin("create_object", |args, _, _| match args {
             [Object(proto), Object(new), ..] => {
                 let obj = crate::runtime::Object::from_proto(proto.clone(), &new.borrow());
                 Ok(Object(ptr(obj)))
             }
-            [a @ Object(..), b, ..] => Err(type_error("Object", &b)),
+            [Object(..), b, ..] => Err(type_error("Object", &b)),
             [a, ..] => Err(type_error("Object", &a)),
             [] => Err(type_error("Object", &Value::None)),
         });
@@ -97,6 +150,7 @@ impl Init for Engine {
         self.define_builtin("tan", unary_fn(f64::tan));
 
         self.define("List", create_list_proto());
+        self.define("String", create_string_proto());
 
         Ok(())
     }
