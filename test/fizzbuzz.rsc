@@ -1,23 +1,17 @@
-let std = import("std/mod.rsc");
-let Range = std.iter.Range;
-
 fn test(n) {
   if n % 15 == 0 {
-    write_string("fizzbuzz");
+    println("fizzbuzz");
   } else if n % 5 == 0 {
-    write_string("buzz");
+    println("buzz");
   } else if n % 3 == 0 {
-    write_string("fizz");
+    println("fizz");
   } else {
-    write_number(n);
+    println(n);
   }
-  write_newline();
 }
 
 fn fizzbuzz(to) {
-  Range.new(0, to).for_each(test);
+  iter.Range.new(0, to).for_each(test);
 }
 
-pub fn main() {
-  fizzbuzz(100);
-}
+fizzbuzz(100);

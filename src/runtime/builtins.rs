@@ -108,8 +108,29 @@ impl Init for Engine {
             [] => Err(type_error("String", &Value::None)),
         });
 
+        fn builtin_print(args: &[Value]) {
+            let mut is_first = true;
+            for arg in args {
+                let s = match arg {
+                    Value::String(s) => s.to_string(),
+                    other => format!("{:?}", other),
+                };
+                if !is_first {
+                    print!(" ");
+                }
+                print!("{}", s);
+                is_first = false;
+            }
+        }
+
         self.define_builtin("print", |args, _, _| {
-            println!("{:?}", args);
+            builtin_print(args);
+            Ok(Value::None)
+        });
+
+        self.define_builtin("println", |args, _, _| {
+            builtin_print(args);
+            println!();
             Ok(Value::None)
         });
 
@@ -144,6 +165,11 @@ impl Init for Engine {
             [] => Err(type_error("Object", &Value::None)),
         });
 
+        self.define_builtin("copy_object", |args, _, _| match args {
+            [Object(obj)] => Ok(Object(ptr(obj.borrow().clone()))),
+            _ => todo!(),
+        });
+
         self.define_builtin("abs", unary_fn(f64::abs));
         self.define_builtin("sin", unary_fn(f64::sin));
         self.define_builtin("cos", unary_fn(f64::cos));
@@ -151,6 +177,24 @@ impl Init for Engine {
 
         self.define("List", create_list_proto());
         self.define("String", create_string_proto());
+
+        // Include core libraries
+        self.push_scope();
+
+        // Class support
+        let class_src = include_str!("core/class.rsc");
+        let class = self.run_src(class_src)?;
+        self.define_global("class", class);
+
+        self.pop_scope();
+        self.push_scope();
+
+        // Iterator support
+        let iterator_src = include_str!("core/iter.rsc");
+        let iter = self.run_src(iterator_src)?;
+        self.define_global("iter", iter);
+
+        self.pop_scope();
 
         Ok(())
     }

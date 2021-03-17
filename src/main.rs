@@ -62,7 +62,8 @@ fn repl(engine: &mut Engine) -> TLResult<()> {
 fn run(engine: &mut Engine, src: &Option<String>, interactive: bool) -> TLResult<()> {
     let mut has_run = false;
     if let Some(src) = src {
-        engine.run_module(src)?;
+        let src = std::fs::read_to_string(src).expect("file could not be read");
+        engine.run_src(&src)?;
         has_run = true;
     }
     if interactive {
@@ -97,12 +98,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         Err(e) => engine.print_error(&e),
         _ => (),
     }
-
-    // match run(&input) {
-    //     Err(err @ TLError::Parse { .. }) => crate::util::print_with_error(&input, &err),
-    //     Err(other) => println!("{:?}", other),
-    //     _ => (),
-    // }
 
     Ok(())
 }

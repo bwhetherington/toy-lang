@@ -74,6 +74,7 @@ fn unary(op: UnaryOp, x: Expression) -> Expression {
 pub enum Statement {
     Function(bool, String, Vec<String>, Option<String>, LambdaBody),
     Definition(bool, String, Expression),
+    Class(bool, String, Option<Expression>, Vec<Field>),
     Assignment(Expression, Expression),
     BinaryAssignment(BinaryOp, Expression, Expression),
     Conditional(Expression, Box<Statement>, Option<Box<Statement>>),
@@ -91,18 +92,17 @@ parser!(pub grammar parser() for str {
 
     rule whitespace()
         = quiet! { [' ' | '\t' | '\r' | '\n'] }
+        / comment()
 
     rule comment()
         = "/*" (!("*/")[_])* "*/"
         / "//" (!['\n'][_])*
 
     rule _()
-        = whitespace()* comment() whitespace()*
-        / whitespace()*
+        = whitespace()*
 
     rule __()
-        = whitespace()* comment() whitespace()*
-        / whitespace()+
+        = whitespace()+
 
     rule string_content() -> &'input str
         = $((!['"'][_])*)
@@ -186,6 +186,15 @@ parser!(pub grammar parser() for str {
         }
         / expected!("lambda")
 
+    rule method_field() -> Field
+        = f:identifier() _ p:param_list() _ b:body_content() {
+            let (params, last) = p;
+            Field {
+                name: f.to_string(),
+                value: Expression::Lambda(params, last, LambdaBody::Block(b))
+            }
+        }
+
     rule field_decl() -> Field
         = f:identifier() _ ":" _ v:expr() {
             Field {
@@ -193,13 +202,7 @@ parser!(pub grammar parser() for str {
                 value: v,
             }
         }
-        / f:identifier() _ p:param_list() _ b:body_content() {
-            let (params, last) = p;
-            Field {
-                name: f.to_string(),
-                value: Expression::Lambda(params, last, LambdaBody::Block(b))
-            }
-        }
+        / method_field()
 
     rule object() -> Expression
         = f:enclosed_list("{", "}", <field_decl()>) { Expression::Object(f) }
@@ -288,6 +291,20 @@ parser!(pub grammar parser() for str {
             )
         }
 
+    rule class_fields() -> Vec<Field>
+        = fields:method_field() ** _ { fields }
+
+    rule class_body() -> Vec<Field>
+        = "{" _ fields:class_fields() _ "}" { fields }
+
+    rule class_definition() -> Statement
+        = "class" __ name:to_string(<identifier()>) _ ":" _ parent:expr() _ fields:class_body() {
+            Statement::Class(false, name, Some(parent), fields)
+        }
+        / "class" __ name:to_string(<identifier()>) _ fields:class_body() {
+            Statement::Class(false, name, None, fields)
+        }
+
     rule return_statement() -> Statement
         = "return" __ e:expr() _ ";" { Statement::Return(e) }
         / "return" _ ";" { Statement::Return(Expression::None) }
@@ -355,8 +372,20 @@ parser!(pub grammar parser() for str {
                 _ => unreachable!()
             }
         }
+        / class_definition()
+        / "pub" __ c:class_definition() {
+            match c {
+                Statement::Class(_, name, parent, value) => Statement::Class(true, name, parent, value),
+                _ => unreachable!()
+            }
+        }
         / definition()
+        / bin_assignment()
         / assignment()
+        / loop_statement()
+        / while_statement()
+        / for_statement()
+        / conditional()
         / e:expr() _ ";" { Statement::Expression(e) }
 
     pub rule module() -> Vec<Statement>

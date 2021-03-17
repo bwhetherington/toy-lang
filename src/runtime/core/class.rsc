@@ -12,7 +12,7 @@ pub let define = (Base) => create_object({
 
 pub let extend = (Base, Class) => define(create_object(Class, {
   create() {
-    let base_instance = create_object(Base.create(), Class);
+    let base_instance = create_object(Base, Class);
     return create_object(base_instance, {});
   },
 }));

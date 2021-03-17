@@ -58,6 +58,20 @@ impl Engine {
         Engine::from_dyn_loader(Box::new(loader))
     }
 
+    pub fn run_src(&mut self, src: &str) -> TLResult<Value> {
+        let stage_one = module(&src)?;
+        let stage_two = desugar_statements(&stage_one)?;
+        self.eval_module(&stage_two)
+    }
+
+    pub fn push_scope(&mut self) {
+        self.env.push();
+    }
+
+    pub fn pop_scope(&mut self) {
+        self.env.pop();
+    }
+
     pub fn load_module(&mut self, path: &str) -> TLResult<Value> {
         // Check if we have the module cached
         let cached = self.module_cache.get(path);
@@ -83,10 +97,7 @@ impl Engine {
                     .load_module(path.as_ref())
                     .ok_or_else(|| TLError::ModuleNotFound(path.as_ref().to_string()))?;
 
-                let stage_one = module(&contents)?;
-                let stage_two = desugar_statements(&stage_one)?;
-
-                let output = self.eval_module(&stage_two)?;
+                let output = self.run_src(&contents)?;
 
                 // Pop the module stack and save value
                 self.module_cache.insert(path.clone(), output.clone());
@@ -103,6 +114,10 @@ impl Engine {
 
     pub fn define(&mut self, name: impl Into<String>, val: Value) {
         self.env.insert(name, val);
+    }
+
+    pub fn define_global(&mut self, name: impl Into<String>, val: Value) {
+        self.env.insert_global(name, val);
     }
 
     pub fn define_builtin(
@@ -229,7 +244,11 @@ impl Engine {
         }
     }
 
-    fn iterate_value(&mut self, val: &Value, f: impl Fn(&Value) -> TLResult<()>) -> TLResult<()> {
+    fn iterate_value(
+        &mut self,
+        val: &Value,
+        mut f: impl FnMut(&Value) -> TLResult<()>,
+    ) -> TLResult<()> {
         let iter = self.eval_method(val, "iter", &[])?;
         loop {
             match self.eval_method(&iter, "next", &[])? {
@@ -329,27 +348,11 @@ impl Engine {
     }
 
     fn eval_method(&mut self, obj: &Value, method: &str, args: &[Value]) -> TLResult<Value> {
-        let obj = match obj {
-            Value::Object(obj) => {
-                let obj = obj.clone();
-                Ok(obj)
-            }
-            Value::List(..) => {
-                let obj = self.get_list_proto()?;
-                Ok(obj)
-            }
-            Value::String(..) => {
-                let obj = self.get_string_proto()?;
-                Ok(obj)
-            }
-            other => Err(type_error("Object", &other)),
-        }?;
-        let val = obj.borrow().get(method).unwrap_or_else(|| Value::None);
+        let val = self.eval_field(obj, method)?;
         self.call_internal(&val, args)
     }
 
-    fn eval_member(&mut self, obj: &DExpression, field: &str) -> TLResult<Value> {
-        let parent = self.eval_expr(obj)?;
+    fn eval_field(&mut self, parent: &Value, field: &str) -> TLResult<Value> {
         let obj = match &parent {
             Value::Object(obj) => {
                 let obj = obj.clone();
@@ -382,6 +385,11 @@ impl Engine {
         }
     }
 
+    fn eval_member(&mut self, obj: &DExpression, field: &str) -> TLResult<Value> {
+        let parent = self.eval_expr(obj)?;
+        self.eval_field(&parent, field)
+    }
+
     fn iterate_spread_list(
         &mut self,
         list: &[Spread<DExpression>],
@@ -390,12 +398,13 @@ impl Engine {
         for Spread { is_spread, value } in list {
             let value = self.eval_expr(value)?;
             match (is_spread, value) {
-                (true, Value::List(list)) => {
-                    for arg in list.borrow().iter() {
-                        f(arg)?;
+                // Optimized form for lists
+                (true, Value::List(xs)) => {
+                    for x in xs.borrow().iter() {
+                        f(x)?;
                     }
                 }
-                (true, other) => return Err(type_error("List", &other)),
+                (true, val) => self.iterate_value(&val, &mut f)?,
                 (false, other) => f(&other)?,
             }
         }
@@ -566,7 +575,7 @@ impl Engine {
                 match obj {
                     Value::Object(obj) => {
                         let mut obj = obj.borrow_mut();
-                        f(obj.get_mut_or_none(field))
+                        obj.mutate_field(field, f)
                     }
                     other => Err(type_error("Object", &other)),
                 }
@@ -693,20 +702,6 @@ impl Engine {
                 Ok(state)
             }
         }
-    }
-
-    pub fn run_module(&mut self, src: &str) -> EvalResult<()> {
-        let res = self.load_module(src)?;
-        match res {
-            Value::Object(obj) => match obj.borrow().get("main") {
-                Some(main_fn) => {
-                    self.call(&main_fn, &[])?;
-                }
-                _ => (),
-            },
-            _ => (),
-        }
-        Ok(())
     }
 
     pub fn print_error(&self, err: &TLError) {

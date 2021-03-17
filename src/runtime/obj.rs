@@ -1,17 +1,26 @@
-use crate::runtime::{Ptr, Scope, Value};
+use crate::common::TLResult;
+use crate::runtime::{ptr, Ptr, Scope, Value};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct Object {
     pub proto: Option<Ptr<Object>>,
-    pub fields: Scope,
+    pub fields: Ptr<Scope>,
 }
 
 impl Object {
     pub fn new() -> Object {
         Object {
             proto: None,
-            fields: HashMap::new(),
+            fields: ptr(HashMap::new()),
+        }
+    }
+
+    pub fn with_proto(&self, proto: Ptr<Object>) -> Object {
+        let fields = self.fields.clone();
+        Object {
+            proto: Some(proto),
+            fields,
         }
     }
 
@@ -23,6 +32,7 @@ impl Object {
 
     pub fn get(&self, field: impl AsRef<str>) -> Option<Value> {
         self.fields
+            .borrow()
             .get(field.as_ref())
             .map(|val| val.clone())
             .or_else(|| {
@@ -33,18 +43,23 @@ impl Object {
     }
 
     pub fn insert(&mut self, field: impl Into<String>, val: Value) {
-        self.fields.insert(field.into(), val);
+        self.fields.borrow_mut().insert(field.into(), val);
     }
 
-    pub fn get_mut_or_none(&mut self, field: impl Into<String>) -> &mut Value {
-        self.fields
-            .entry(field.into())
-            .or_insert_with(|| Value::None)
+    pub fn mutate_field(
+        &mut self,
+        field: impl Into<String>,
+        f: impl FnOnce(&mut Value) -> TLResult<()>,
+    ) -> TLResult<()> {
+        let mut fields = self.fields.borrow_mut();
+        let entry = fields.entry(field.into()).or_insert_with(|| Value::None);
+        f(entry)
     }
 
     pub fn super_proto(&self) -> Option<Ptr<Object>> {
         let proto = self.proto.as_ref()?.borrow();
-        let super_proto = proto.proto.as_ref()?;
-        Some(super_proto.clone())
+        let super_proto = proto.proto.as_ref()?.clone();
+        let super_obj = self.with_proto(super_proto);
+        Some(ptr(super_obj))
     }
 }

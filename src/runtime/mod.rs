@@ -59,10 +59,23 @@ impl fmt::Debug for Value {
             Value::Boolean(b) if *b => write!(f, "True"),
             Value::Boolean(..) => write!(f, "False"),
             Value::List(xs) => write!(f, "{:?}", xs.borrow()),
-            Value::Function(..) => write!(f, "<func>"),
-            Value::Builtin(..) => write!(f, "<func>"),
+            Value::Function(..) => write!(f, "<fn>"),
+            Value::Builtin(..) => write!(f, "<fn>"),
             Value::String(s) => write!(f, "{:?}", s),
-            Value::Object(o) => write!(f, "{:?}", o.borrow().fields),
+            Value::Object(o) => {
+                let obj = o.borrow();
+                let fields = obj.fields.borrow();
+                write!(f, "{{")?;
+                let mut is_started = false;
+                for (key, value) in fields.iter() {
+                    if is_started {
+                        write!(f, ", ");
+                    }
+                    write!(f, "{}: {:?}", key, value);
+                    is_started = true;
+                }
+                write!(f, "}}")
+            }
             Value::None => write!(f, "None"),
         }
     }

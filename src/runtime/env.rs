@@ -19,6 +19,12 @@ impl Env {
         self.scopes.pop();
     }
 
+    pub fn insert_global(&mut self, key: impl Into<String>, val: Value) -> Option<()> {
+        let scope = self.scopes.first_mut()?;
+        scope.insert(key.into(), val);
+        Some(())
+    }
+
     pub fn insert(&mut self, key: impl Into<String>, val: Value) -> Option<()> {
         let scope = self.scopes.last_mut()?;
         scope.insert(key.into(), val);

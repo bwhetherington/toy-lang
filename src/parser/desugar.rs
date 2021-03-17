@@ -283,6 +283,35 @@ impl TryFrom<&Statement> for DStatement {
                 let expr = DExpression::try_from(expr)?;
                 Ok(DStatement::Expression(expr))
             }
+            Statement::Class(is_pub, name, parent, methods) => {
+                let declarations = try_from_list::<_, _, DField>(methods)?;
+                let obj = Spread {
+                    value: DExpression::Object(declarations),
+                    is_spread: false,
+                };
+
+                // Create class definition call
+                let class = if let Some(parent) = parent {
+                    let parent = DExpression::try_from(parent)?;
+                    let parent = Spread {
+                        value: parent,
+                        is_spread: false,
+                    };
+                    let extend = DExpression::Member(
+                        Box::new(DExpression::Identifier("class".to_string())),
+                        "extend".to_string(),
+                    );
+                    DExpression::Call(Box::new(extend), vec![parent, obj])
+                } else {
+                    let define = DExpression::Member(
+                        Box::new(DExpression::Identifier("class".to_string())),
+                        "define".to_string(),
+                    );
+                    DExpression::Call(Box::new(define), vec![obj])
+                };
+
+                Ok(DStatement::Definition(*is_pub, name.clone(), class))
+            }
         }
     }
 }

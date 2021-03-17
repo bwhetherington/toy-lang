@@ -1,5 +1,4 @@
-let std = import("std/mod.rsc");
-let Range = std.iter.Range;
+let Range = iter.Range;
 
 fn create_empty_list(length, default) {
   let list = [];
@@ -23,43 +22,43 @@ fn next_state(cell, count) {
   }
 }
 
-let Life = std.class.define({
+class GameOfLife {
   init(rows, cols) {
     self._rows = rows;
     self._cols = cols;
     self._data = create_empty_list(rows * cols, False);
     self._next = create_empty_list(rows * cols, False);
-  },
+  }
 
   _get_index(row, col) {
     row %= self._rows;
     col %= self._cols;
     return row * self._cols + col;
-  },
+  }
 
   set_cell(row, col, val) {
     let index = self._get_index(row, col);
     self._data[index] = val;
-  },
+  }
 
   get_cell(row, col) {
     let index = self._get_index(row, col);
     return self._data[index];
-  },
+  }
 
   print() {
     for row in Range.new(0, self._rows) {
       for col in Range.new(0, self._cols) {
         let cell = self.get_cell(row, col);
         if cell {
-          write_string("O ");
+          print("O ");
         } else {
-          write_string("  ");
+          print("  ");
         }
       }
-      write_newline();
+      println();
     }
-  },
+  }
 
   count_neighbors(row, col) {
     let count = 0;
@@ -73,7 +72,7 @@ let Life = std.class.define({
       }
     }
     return count;
-  },
+  }
 
   advance() {
     // Compute next board state
@@ -90,27 +89,31 @@ let Life = std.class.define({
     let tmp = self._data;
     self._data = self._next;
     self._next = tmp;
-  },
-});
+  }
+}
 
-pub fn main() {
+fn main() {
+  // Create board
   let rows = 10;
   let cols = 10;
-  let board = Life.new(rows, cols);
+  let board = GameOfLife.new(rows, cols);
 
-  // Initialize board
+  // Initialize board state
   board.set_cell(0, 1, True);
   board.set_cell(1, 2, True);
   board.set_cell(2, 0, True);
   board.set_cell(2, 1, True);
   board.set_cell(2, 2, True);
 
+  // Simulate board
   for _ in Range.new(0, 30) {
     board.print();
     board.advance();
     for _ in Range.new(0, cols) {
-      write_string("--");
+      print("--");
     }
-    write_newline();
+    println();
   }
 }
+
+main();
