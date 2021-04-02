@@ -1,1 +1,1 @@
-pub let func = import("./func.rsc");
+pub let func = import("./func.rsc")

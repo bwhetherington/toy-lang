@@ -102,6 +102,14 @@ impl TryFrom<&Expression> for DExpression {
                 let args = try_from_list(args)?;
                 Ok(DExpression::Call(Box::new(function), args))
             }
+            Expression::New(class, args) => {
+                let class = Self::try_from(class.as_ref())?;
+                let args = try_from_list(args)?;
+                Ok(DExpression::Call(
+                    Box::new(DExpression::Member(Box::new(class), "new".into())),
+                    args,
+                ))
+            }
             Expression::List(list) => {
                 let list = try_from_list::<_, _, Spread<DExpression>>(list)?;
                 Ok(DExpression::List(list))
@@ -153,7 +161,6 @@ impl TryFrom<&Expression> for DExpression {
                     ))),
                 }
             }
-            Expression::Link(parts) => Ok(DExpression::Identifier(parts.join("::"))),
         }
     }
 }
@@ -297,16 +304,10 @@ impl TryFrom<&Statement> for DStatement {
                         value: parent,
                         is_spread: false,
                     };
-                    let extend = DExpression::Member(
-                        Box::new(DExpression::Identifier("class".to_string())),
-                        "extend".to_string(),
-                    );
+                    let extend = DExpression::Identifier("__extend_class__".to_string());
                     DExpression::Call(Box::new(extend), vec![parent, obj])
                 } else {
-                    let define = DExpression::Member(
-                        Box::new(DExpression::Identifier("class".to_string())),
-                        "define".to_string(),
-                    );
+                    let define = DExpression::Identifier("__define_class__".to_string());
                     DExpression::Call(Box::new(define), vec![obj])
                 };
 

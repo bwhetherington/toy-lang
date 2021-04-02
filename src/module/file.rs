@@ -10,12 +10,18 @@ pub struct FileLoader {
 }
 
 impl ModuleLoader for FileLoader {
+    fn entry_point(&mut self, path: &str) -> Option<()> {
+        let path = Path::new(path).to_path_buf();
+        let path = path.canonicalize().ok()?;
+        self.file_stack.push(path.parent()?.to_owned());
+        Some(())
+    }
+
     fn load_module(&mut self, path: &str) -> Option<String> {
         let path = ModulePath::resolve(path);
         let path = self.resolve_path(&path)?;
-        let fixed_path = path.canonicalize().ok()?;
-        let res = fs::read_to_string(&fixed_path).ok();
-        self.file_stack.push(fixed_path.parent()?.to_owned());
+        let res = fs::read_to_string(&path).ok();
+        self.file_stack.push(path.parent()?.to_owned());
         res
     }
 
@@ -52,6 +58,6 @@ impl FileLoader {
         for section in path {
             root.push(section);
         }
-        Some(root)
+        root.canonicalize().ok()
     }
 }

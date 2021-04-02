@@ -58,10 +58,47 @@ impl Engine {
         Engine::from_dyn_loader(Box::new(loader))
     }
 
-    pub fn run_src(&mut self, src: &str) -> TLResult<Value> {
-        let stage_one = module(&src)?;
+    pub fn entry_point(&mut self, path: &str) {
+        self.loader.entry_point(path);
+        self.module_stack.push(path.into());
+    }
+
+    pub fn eval_module_with(
+        &mut self,
+        module: &[DStatement],
+        mut define: impl FnMut(&str, Value) -> (),
+    ) -> TLResult<()> {
+        self.env.push();
+        for stmt in module {
+            self.eval_stmt(EngineState::Run, stmt, &mut define)?;
+        }
+        self.env.pop();
+        Ok(())
+    }
+
+    fn run_src_with(&mut self, src: &str, define: impl FnMut(&str, Value) -> ()) -> TLResult<()> {
+        let full_src = format!("{}\n", src);
+        let stage_one = module(&full_src)?;
         let stage_two = desugar_statements(&stage_one)?;
-        self.eval_module(&stage_two)
+        self.eval_module_with(&stage_two, define)
+    }
+
+    pub fn run_src_map(&mut self, src: &str) -> TLResult<HashMap<String, Value>> {
+        let mut export = HashMap::new();
+        self.run_src_with(src, |name, value| {
+            export.insert(name.to_string(), value);
+        })?;
+        Ok(export)
+    }
+
+    pub fn run_src(&mut self, src: &str) -> TLResult<Value> {
+        let mut export = Object::new();
+
+        self.run_src_with(src, |name, value| {
+            export.insert(name, value);
+        })?;
+
+        Ok(Value::Object(ptr(export)))
     }
 
     pub fn push_scope(&mut self) {
@@ -70,6 +107,10 @@ impl Engine {
 
     pub fn pop_scope(&mut self) {
         self.env.pop();
+    }
+
+    pub fn push_module_path(&mut self, path: Str) {
+        self.module_stack.push(path);
     }
 
     pub fn load_module(&mut self, path: &str) -> TLResult<Value> {
@@ -90,7 +131,7 @@ impl Engine {
                     return Err(TLError::CircularDependency);
                 }
 
-                self.module_stack.push(path.clone());
+                self.push_module_path(path.clone());
 
                 let contents = self
                     .loader
@@ -302,11 +343,17 @@ impl Engine {
         match (op, lhs, rhs) {
             (op, Ok(lhs), Ok(rhs)) => match (op, lhs, rhs) {
                 (Add, Number(x), Number(y)) => Ok(Number(x + y)),
+                (Add, x, y) => self.eval_method(&x, "plus", &[y]),
                 (Subtract, Number(x), Number(y)) => Ok(Number(x - y)),
+                (Subtract, x, y) => self.eval_method(&x, "subtract", &[y]),
                 (Multiply, Number(x), Number(y)) => Ok(Number(x * y)),
+                (Multiply, x, y) => self.eval_method(&x, "multiply", &[y]),
                 (Divide, Number(x), Number(y)) => Ok(Number(x / y)),
+                (Divide, x, y) => self.eval_method(&x, "divide", &[y]),
                 (Mod, Number(x), Number(y)) => Ok(Number(x % y)),
+                (Mod, x, y) => self.eval_method(&x, "modulo", &[y]),
                 (Power, Number(x), Number(y)) => Ok(Number(x.powf(y))),
+                (Power, x, y) => self.eval_method(&x, "exponentiate", &[y]),
                 (GT, Number(x), Number(y)) => Ok(Boolean(x > y)),
                 (GTE, Number(x), Number(y)) => Ok(Boolean(x >= y)),
                 (LT, Number(x), Number(y)) => Ok(Boolean(x < y)),
@@ -347,29 +394,95 @@ impl Engine {
         }
     }
 
+    fn get_number_proto(&self) -> TLResult<Ptr<Object>> {
+        match self.lookup("Number")? {
+            Value::Object(obj) => Ok(obj.clone()),
+            other => Err(type_error("Object", other)),
+        }
+    }
+
+    fn get_boolean_proto(&self) -> TLResult<Ptr<Object>> {
+        match self.lookup("Boolean")? {
+            Value::Object(obj) => Ok(obj.clone()),
+            other => Err(type_error("Object", other)),
+        }
+    }
+
+    fn get_function_proto(&self) -> TLResult<Ptr<Object>> {
+        match self.lookup("Function")? {
+            Value::Object(obj) => Ok(obj.clone()),
+            other => Err(type_error("Object", other)),
+        }
+    }
+
+    fn get_object_proto(&self) -> TLResult<Ptr<Object>> {
+        match self.lookup("Object")? {
+            Value::Object(obj) => Ok(obj.clone()),
+            other => Err(type_error("Object", other)),
+        }
+    }
+
+    fn get_none_proto(&self) -> TLResult<Ptr<Object>> {
+        match self.lookup("NoneProto")? {
+            Value::Object(obj) => Ok(obj.clone()),
+            other => Err(type_error("Object", other)),
+        }
+    }
+
+    pub fn instance_of(&self, value: &Value, type_value: &Value) -> bool {
+        let proto = match self.get_proto_value(value) {
+            Ok(Some(proto)) => proto,
+            _ => return false,
+        };
+
+        if self.eval_equals(&proto, type_value) {
+            true
+        } else {
+            self.instance_of(&proto, type_value)
+        }
+    }
+
+    fn get_fields(&self, value: &Value) -> TLResult<Option<Ptr<Object>>> {
+        match value {
+            Value::Object(obj) => Ok(Some(obj.clone())),
+            other => self.get_proto(other),
+        }
+    }
+
+    fn get_proto(&self, value: &Value) -> TLResult<Option<Ptr<Object>>> {
+        match value {
+            Value::Object(obj) => {
+                let proto = obj.borrow().proto.clone();
+                match proto {
+                    Some(proto) => Ok(Some(proto)),
+                    None => Ok(None),
+                }
+            }
+            Value::List(..) => self.get_list_proto().map(Some),
+            Value::String(..) => self.get_string_proto().map(Some),
+            Value::Number(..) => self.get_number_proto().map(Some),
+            Value::Boolean(..) => self.get_boolean_proto().map(Some),
+            Value::Function(..) | Value::Builtin(..) => self.get_function_proto().map(Some),
+            Value::None => self.get_none_proto().map(Some),
+        }
+    }
+
+    fn get_proto_value(&self, value: &Value) -> TLResult<Option<Value>> {
+        let proto_obj = self.get_proto(value)?;
+        Ok(proto_obj.map(Value::Object))
+    }
+
     fn eval_method(&mut self, obj: &Value, method: &str, args: &[Value]) -> TLResult<Value> {
         let val = self.eval_field(obj, method)?;
         self.call_internal(&val, args)
     }
 
     fn eval_field(&mut self, parent: &Value, field: &str) -> TLResult<Value> {
-        let obj = match &parent {
-            Value::Object(obj) => {
-                let obj = obj.clone();
-                Ok(obj)
-            }
-            Value::List(..) => {
-                let obj = self.get_list_proto()?;
-                Ok(obj)
-            }
-            Value::String(..) => {
-                let obj = self.get_string_proto()?;
-                Ok(obj)
-            }
-            other => Err(type_error("Object", &other)),
-        }?;
+        let obj = self.get_fields(parent)?;
 
-        let val = obj.borrow().get(field).unwrap_or_else(|| Value::None);
+        let val = obj
+            .and_then(|obj| obj.borrow().get(field))
+            .unwrap_or_else(|| Value::None);
         match val {
             Value::Function(f) => {
                 let mut new_f = f.borrow().clone();
@@ -428,6 +541,7 @@ impl Engine {
             Value::Builtin(f) => self.call_builtin(f.as_ref(), args),
             other => {
                 println!("function: {:?}", other);
+                println!("{:?}", self.module_stack);
                 Err(type_error("Function", &other))
             }
         }
@@ -586,7 +700,7 @@ impl Engine {
     fn eval_block(&mut self, state: EngineState, block: &[DStatement]) -> EvalResult<EngineState> {
         let cur_state = EngineState::Block;
         for stmt in block {
-            let next_state = self.eval_stmt(cur_state, stmt, None)?;
+            let next_state = self.eval_stmt(cur_state, stmt, &mut |_, _| {})?;
             match next_state {
                 EngineState::Return => {
                     return Ok(EngineState::Return);
@@ -601,23 +715,11 @@ impl Engine {
         Ok(state)
     }
 
-    pub fn eval_module(&mut self, module: &[DStatement]) -> EvalResult<Value> {
-        let mut export = Object::new();
-
-        self.env.push();
-        for stmt in module {
-            self.eval_stmt(EngineState::Run, stmt, Some(&mut export))?;
-        }
-        self.env.pop();
-
-        Ok(Value::Object(ptr(export)))
-    }
-
     pub fn eval_stmt(
         &mut self,
         state: EngineState,
         stmt: &DStatement,
-        export: Option<&mut Object>,
+        define: &mut dyn FnMut(&str, Value) -> (),
     ) -> EvalResult<EngineState> {
         // println!("exe {:?}", stmt);
         match stmt {
@@ -637,12 +739,13 @@ impl Engine {
                     Value::Boolean(b) => {
                         if b {
                             self.env.push();
-                            let state = self.eval_stmt(state, then.as_ref(), None)?;
+                            let state = self.eval_stmt(state, then.as_ref(), &mut |_, _| {})?;
                             self.env.pop();
                             Ok(state)
                         } else {
                             self.env.push();
-                            let state = self.eval_stmt(state, otherwise.as_ref(), None)?;
+                            let state =
+                                self.eval_stmt(state, otherwise.as_ref(), &mut |_, _| {})?;
                             self.env.pop();
                             Ok(state)
                         }
@@ -659,22 +762,12 @@ impl Engine {
                 Ok(state)
             }
             DStatement::Definition(is_pub, name, value) => {
-                let value = self.eval_expr(value)?;
+                let mut value = self.eval_expr(value)?;
 
-                match &value {
-                    Value::Function(f) => {
-                        let mut f = f.borrow_mut();
-                        if !f.closure.contains_key(name) {
-                            f.closure.insert(name.clone(), value.clone());
-                        }
-                    }
-                    _ => (),
-                }
-
+                let rec_value = value.clone();
+                value.insert_recursive_reference(name, &rec_value);
                 if *is_pub {
-                    if let Some(export) = export {
-                        export.insert(name, value.clone());
-                    }
+                    define(name, value.clone());
                 }
                 self.env.insert(name, value);
                 Ok(state)
@@ -691,7 +784,7 @@ impl Engine {
             DStatement::Loop(body) => {
                 loop {
                     self.env.push();
-                    let next_state = self.eval_stmt(state, body.as_ref(), None)?;
+                    let next_state = self.eval_stmt(state, body.as_ref(), &mut |_, _| {})?;
                     self.env.pop();
                     match next_state {
                         EngineState::Break => break,

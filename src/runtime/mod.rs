@@ -59,8 +59,8 @@ impl fmt::Debug for Value {
             Value::Boolean(b) if *b => write!(f, "True"),
             Value::Boolean(..) => write!(f, "False"),
             Value::List(xs) => write!(f, "{:?}", xs.borrow()),
-            Value::Function(..) => write!(f, "<fn>"),
-            Value::Builtin(..) => write!(f, "<fn>"),
+            Value::Function(..) => write!(f, "<Function>"),
+            Value::Builtin(..) => write!(f, "<Function>"),
             Value::String(s) => write!(f, "{:?}", s),
             Value::Object(o) => {
                 let obj = o.borrow();
@@ -69,9 +69,9 @@ impl fmt::Debug for Value {
                 let mut is_started = false;
                 for (key, value) in fields.iter() {
                     if is_started {
-                        write!(f, ", ");
+                        write!(f, ", ")?;
                     }
-                    write!(f, "{}: {:?}", key, value);
+                    write!(f, "{}: {:?}", key, value)?;
                     is_started = true;
                 }
                 write!(f, "}}")
@@ -92,6 +92,35 @@ impl Value {
             Value::String(..) => "String",
             Value::Object(..) => "Object",
             Value::None => "None",
+        }
+    }
+
+    pub fn insert_recursive_reference(&mut self, name: &str, value: &Value) {
+        match self {
+            Value::Function(f) => {
+                let mut f = f.borrow_mut();
+                if !f.closure.contains_key(name) {
+                    f.closure.insert(name.to_string(), value.clone());
+                }
+            }
+            Value::Object(obj) => {
+                let obj = obj.borrow_mut();
+                {
+                    let mut fields = obj.fields.borrow_mut();
+                    for field in fields.values_mut() {
+                        field.insert_recursive_reference(name, value);
+                    }
+                }
+                if let Some(mut proto) = obj.proto.clone().map(Value::Object) {
+                    proto.insert_recursive_reference(name, value);
+                }
+            }
+            Value::List(items) => {
+                for item in items.borrow_mut().iter_mut() {
+                    item.insert_recursive_reference(name, value);
+                }
+            }
+            _ => (),
         }
     }
 }

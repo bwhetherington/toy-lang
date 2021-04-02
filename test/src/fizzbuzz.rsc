@@ -11,7 +11,7 @@ fn test(n) {
 }
 
 fn fizzbuzz(to) {
-  iter.Range.new(0, to).for_each(test);
+  (new Range(0, to)).for_each(test);
 }
 
 fizzbuzz(100);

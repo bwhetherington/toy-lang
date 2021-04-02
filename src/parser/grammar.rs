@@ -59,7 +59,7 @@ pub enum Expression {
     Lambda(Vec<String>, Option<String>, LambdaBody),
     Pipe(Box<Expression>, Box<Expression>),
     Object(Vec<Field>),
-    Link(Vec<String>),
+    New(Box<Expression>, Vec<Spread<Expression>>),
 }
 
 fn binary(op: BinaryOp, lhs: Expression, rhs: Expression) -> Expression {
@@ -90,8 +90,16 @@ pub enum Statement {
 parser!(pub grammar parser() for str {
     use peg::ParseLiteral;
 
+    rule linebreak()
+        = quiet! { "\r\n" }
+        / quiet! { "\n" }
+
+    rule non_linebreak_whitespace()
+        = quiet! { [' ' | '\t' ] }
+
     rule whitespace()
-        = quiet! { [' ' | '\t' | '\r' | '\n'] }
+        = non_linebreak_whitespace()
+        / linebreak()
         / comment()
 
     rule comment()
@@ -103,6 +111,10 @@ parser!(pub grammar parser() for str {
 
     rule __()
         = whitespace()+
+
+    rule line_end()
+        = non_linebreak_whitespace()* linebreak()
+        / _ ";"
 
     rule string_content() -> &'input str
         = $((!['"'][_])*)
@@ -121,6 +133,7 @@ parser!(pub grammar parser() for str {
 
     rule float() -> f64
         = n:$(int() ("." digit()*) ("e" int())?) { n.parse().unwrap() }
+        / "NaN" { std::f64::NAN }
         / expected!("Float")
 
     rule boolean() -> bool
@@ -195,6 +208,15 @@ parser!(pub grammar parser() for str {
             }
         }
 
+    rule expr_method_field() -> Field
+        = f:identifier() _ p:param_list() _ "=>" _ e:expr() {
+            let (params, last) = p;
+            Field {
+                name: f.to_string(),
+                value: Expression::Lambda(params, last, LambdaBody::Expression(Box::new(e)))
+            }
+        }
+
     rule field_decl() -> Field
         = f:identifier() _ ":" _ v:expr() {
             Field {
@@ -203,6 +225,7 @@ parser!(pub grammar parser() for str {
             }
         }
         / method_field()
+        / expr_method_field()
 
     rule object() -> Expression
         = f:enclosed_list("{", "}", <field_decl()>) { Expression::Object(f) }
@@ -214,13 +237,40 @@ parser!(pub grammar parser() for str {
         / "None" { Expression::None }
         / s:string() { Expression::String(s.to_string()) }
         / i:identifier() { Expression::Identifier(i.to_string()) }
-        / l:link() { Expression::Link(l) }
         / l:list_expr() { Expression::List(l) }
         / object()
         / "(" _ x:expr() _ ")" { x }
 
+    rule constructor() -> Expression = precedence! {
+        x:@ _ "[" _ y:expr() _ "]" { binary(BinaryOp::Index, x, y) }
+        x:@ _ "." _ y:identifier() { Expression::Member(Box::new(x), y.to_string()) }
+        --
+        x:atom() { x }
+    }
+
+    rule new() -> Expression
+        = "new" __ e:constructor() _ l:arg_list() { Expression::New(Box::new(e), l) }
+
+    rule primary_expr() -> Expression = precedence! {
+        x:@ _ "[" _ y:expr() _ "]" { binary(BinaryOp::Index, x, y) }
+        x:@ _ "." _ y:identifier() { Expression::Member(Box::new(x), y.to_string()) }
+        --
+        x:@ _ l:arg_list() { Expression::Call(Box::new(x), l) }
+        --
+        x:atom() { x }
+    }
+
+    rule unary() -> Expression
+        = "!" _ x:primary_expr() { unary(UnaryOp::Not, x) }
+        / "-" _ x:primary_expr() { unary(UnaryOp::Negative, x) }
+
     rule arithmetic() -> Expression = precedence! {
         e:lambda() { e }
+        e:new() { e }
+        --
+        x:(@) _ "||" _ y:@ { binary(BinaryOp::LogicOr, x, y) }
+        --
+        x:(@) _ "&&" _ y:@ { binary(BinaryOp::LogicAnd, x, y) }
         --
         x:(@) _ "==" _ y:@ { binary(BinaryOp::Equals, x, y) }
         x:(@) _ "!=" _ y:@ { binary(BinaryOp::NotEquals, x, y) }
@@ -228,9 +278,6 @@ parser!(pub grammar parser() for str {
         x:(@) _ ">=" _ y:@ { binary(BinaryOp::GTE, x, y) }
         x:(@) _ "<" _ y:@ { binary(BinaryOp::LT, x, y) }
         x:(@) _ "<=" _ y:@ { binary(BinaryOp::LTE, x, y) }
-        --
-        x:(@) _ "&&" _ y:@ { binary(BinaryOp::LogicAnd, x, y) }
-        x:(@) _ "||" _ y:@ { binary(BinaryOp::LogicOr, x, y) }
         --
         x:(@) _ "+" _ y:@ { binary(BinaryOp::Add, x, y) }
         x:(@) _ "-" _ y:@ { binary(BinaryOp::Subtract, x, y) }
@@ -241,15 +288,11 @@ parser!(pub grammar parser() for str {
         --
         x:@ _ "^" _ y:(@) { binary(BinaryOp::Power, x, y) }
         --
-        x:@ _ "[" _ y:(expr()) "]" { binary(BinaryOp::Index, x, y) }
-        x:@ _ "." _ y:(identifier()) { Expression::Member(Box::new(x), y.to_string()) }
-        x:@ _ l:arg_list() { Expression::Call(Box::new(x), l) }
+        e:primary_expr() { e }
         --
-        "!" _ x:@ { unary(UnaryOp::Not, x) }
-        "-" _ x:@ { unary(UnaryOp::Negative, x) }
-        --
-        e:atom() { e }
-    } / expected!("operator")
+        e:unary() { e }
+    }
+    / expected!("operator")
 
     pub rule expr() -> Expression = precedence! {
         x:(@) _ "|>" _ y:@ { Expression::Pipe(Box::new(x), Box::new(y)) }
@@ -258,20 +301,20 @@ parser!(pub grammar parser() for str {
     }
 
     rule bin_assignment() -> Statement
-        = lhs:expr() _ "+=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Add, lhs, rhs) }
-        / lhs:expr() _ "-=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Subtract, lhs, rhs) }
-        / lhs:expr() _ "*=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Multiply, lhs, rhs) }
-        / lhs:expr() _ "/=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Divide, lhs, rhs) }
-        / lhs:expr() _ "%=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Mod, lhs, rhs) }
-        / lhs:expr() _ "&&=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::LogicAnd, lhs, rhs) }
-        / lhs:expr() _ "||=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::LogicOr, lhs, rhs) }
-        / lhs:expr() _ "===" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Equals, lhs, rhs) }
-        / lhs:expr() _ "!==" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::NotEquals, lhs, rhs) }
-        / lhs:expr() _ "[]=" _ rhs:expr() _ ";" { Statement::BinaryAssignment(BinaryOp::Index, lhs, rhs) }
+        = lhs:expr() _ "+=" _ rhs:expr() line_end() { Statement::BinaryAssignment(BinaryOp::Add, lhs, rhs) }
+        / lhs:expr() _ "-=" _ rhs:expr() line_end() { Statement::BinaryAssignment(BinaryOp::Subtract, lhs, rhs) }
+        / lhs:expr() _ "*=" _ rhs:expr() line_end() { Statement::BinaryAssignment(BinaryOp::Multiply, lhs, rhs) }
+        / lhs:expr() _ "/=" _ rhs:expr() line_end() { Statement::BinaryAssignment(BinaryOp::Divide, lhs, rhs) }
+        / lhs:expr() _ "%=" _ rhs:expr() line_end() { Statement::BinaryAssignment(BinaryOp::Mod, lhs, rhs) }
+        / lhs:expr() _ "&&=" _ rhs:expr() line_end() { Statement::BinaryAssignment(BinaryOp::LogicAnd, lhs, rhs) }
+        / lhs:expr() _ "||=" _ rhs:expr() line_end() { Statement::BinaryAssignment(BinaryOp::LogicOr, lhs, rhs) }
+        / lhs:expr() _ "===" _ rhs:expr() line_end() { Statement::BinaryAssignment(BinaryOp::Equals, lhs, rhs) }
+        / lhs:expr() _ "!==" _ rhs:expr() line_end() { Statement::BinaryAssignment(BinaryOp::NotEquals, lhs, rhs) }
+        / lhs:expr() _ "[]=" _ rhs:expr() line_end() { Statement::BinaryAssignment(BinaryOp::Index, lhs, rhs) }
 
 
     rule assignment() -> Statement
-        = lhs:expr() _ "=" _ rhs:expr() _ ";" { Statement::Assignment(lhs, rhs) }
+        = lhs:expr() _ "=" _ rhs:expr() line_end() { Statement::Assignment(lhs, rhs) }
 
     rule statements() -> Vec<Statement>
         = s:statement() ** _ { s }
@@ -283,7 +326,7 @@ parser!(pub grammar parser() for str {
         = s:body_content() { Statement::Block(s) }
 
     rule definition() -> Statement
-        = "let" __ name:to_string(<identifier()>) _ "=" _ value:expr() _ ";" {
+        = "let" __ name:to_string(<identifier()>) _ "=" _ value:expr() line_end() {
             Statement::Definition(
                 false,
                 name,
@@ -291,8 +334,12 @@ parser!(pub grammar parser() for str {
             )
         }
 
+    rule class_method_field() -> Field
+        = method_field()
+        / m:expr_method_field() line_end() { m }
+
     rule class_fields() -> Vec<Field>
-        = fields:method_field() ** _ { fields }
+        = fields:class_method_field() ** _ { fields }
 
     rule class_body() -> Vec<Field>
         = "{" _ fields:class_fields() _ "}" { fields }
@@ -306,11 +353,11 @@ parser!(pub grammar parser() for str {
         }
 
     rule return_statement() -> Statement
-        = "return" __ e:expr() _ ";" { Statement::Return(e) }
-        / "return" _ ";" { Statement::Return(Expression::None) }
+        = "return" __ e:expr() line_end() { Statement::Return(e) }
+        / "return" line_end() { Statement::Return(Expression::None) }
 
     rule expression_statement() -> Statement
-        = e:expr() _ ";" { Statement::Expression(e) }
+        = e:expr() line_end() { Statement::Expression(e) }
 
     rule conditional() -> Statement
         = "if" __ c:expr() __ then:statement() _ "else" _ otherwise:statement() {
@@ -354,7 +401,7 @@ parser!(pub grammar parser() for str {
         / loop_statement()
         / while_statement()
         / for_statement()
-        / "break" _ ";" { Statement::Break }
+        / "break" line_end() { Statement::Break }
         / expression_statement()
         / expected!("statement")
 
@@ -386,11 +433,11 @@ parser!(pub grammar parser() for str {
         / while_statement()
         / for_statement()
         / conditional()
-        / e:expr() _ ";" { Statement::Expression(e) }
+        / e:expr() line_end() { Statement::Expression(e) }
 
     pub rule module() -> Vec<Statement>
         = _ s:module_decl() ** _ _ { s }
 
     pub rule statement() -> Statement
-        = ";"* _ s:statement_content() _ ";"* { s }
+        = line_end()* _ s:statement_content() line_end()* { s }
 });

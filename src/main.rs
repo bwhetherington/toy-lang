@@ -26,9 +26,9 @@ fn eval_line(line: &str, engine: &mut Engine) -> Result<(), TLError> {
 
 fn execute_line(line: &str, engine: &mut Engine) -> Result<(), TLError> {
     use std::convert::TryFrom;
-    let parsed = crate::parser::grammar::parser::statement(&format!("{};", line))?;
+    let parsed = crate::parser::grammar::parser::statement(&format!("{}\n", line))?;
     let body = DStatement::try_from(&parsed)?;
-    engine.eval_stmt(EngineState::Run, &body, None)?;
+    engine.eval_stmt(EngineState::Run, &body, &mut |_, _| {})?;
     Ok(())
 }
 
@@ -62,6 +62,7 @@ fn repl(engine: &mut Engine) -> TLResult<()> {
 fn run(engine: &mut Engine, src: &Option<String>, interactive: bool) -> TLResult<()> {
     let mut has_run = false;
     if let Some(src) = src {
+        engine.entry_point(src);
         let src = std::fs::read_to_string(src).expect("file could not be read");
         engine.run_src(&src)?;
         has_run = true;
