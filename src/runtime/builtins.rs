@@ -24,7 +24,7 @@ fn binary_fn(
 ) -> impl Fn(&[Value], &mut Engine, Option<&Value>) -> Result<Value, TLError> {
     move |args, _, _| match args {
         [Value::Number(x), Value::Number(y), ..] => Ok(Value::Number(f(*x, *y))),
-        [Value::Number(_), y, ..] => Err(type_error("Number", y)), 
+        [Value::Number(_), y, ..] => Err(type_error("Number", y)),
         [x, ..] => Err(type_error("Number", x)),
         [] => Err(type_error("Number", &Value::None)),
     }
@@ -62,6 +62,20 @@ fn create_string_proto() -> Value {
                 None => Err(type_error("String", &Value::None)),
             }),
         );
+        obj.insert(
+            "plus",
+            builtin(|args, _, self_value| match (self_value, args) {
+                (Some(Value::String(s)), [other, ..]) => {
+                    let out_str = match other {
+                        Value::String(other_s) => format!("{}{}", s, other_s),
+                        other => format!("{}{:?}", s, other),
+                    };
+                    Ok(Value::String(out_str.into()))
+                }
+                (Some(other), _) => Err(type_error("String", other)),
+                (None, _) => Err(type_error("String", &Value::None)),
+            }),
+        )
     })
 }
 
@@ -156,14 +170,8 @@ impl Init for Engine {
             }
         }
 
-        self.define_builtin("print", |args, _, _| {
+        self.define_builtin("__print__", |args, _, _| {
             builtin_print(args);
-            Ok(Value::None)
-        });
-
-        self.define_builtin("println", |args, _, _| {
-            builtin_print(args);
-            println!();
             Ok(Value::None)
         });
 
@@ -192,7 +200,6 @@ impl Init for Engine {
         self.define_builtin("acos", unary_fn(f64::acos));
         self.define_builtin("atan", unary_fn(f64::atan));
         self.define_builtin("atan2", binary_fn(f64::atan2));
-
 
         self.define_builtin("type_of", |args, _, _| match args {
             [x, ..] => Ok(Value::String(x.type_of().into())),
@@ -238,6 +245,13 @@ impl Init for Engine {
         // Prototype methods
         let protos_src = include_str!("core/protos.rsc");
         self.run_src_map(protos_src)?;
+
+        // IO functions
+        let io_src = include_str!("core/io.rsc");
+        let io_decls = self.run_src_map(io_src)?;
+        for (name, value) in io_decls {
+            self.define_global(name, value);
+        }
 
         self.pop_scope();
 

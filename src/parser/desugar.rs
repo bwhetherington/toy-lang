@@ -1,6 +1,9 @@
 use crate::{
-    common::TLError,
-    parser::grammar::{BinaryOp, Expression, Field, LambdaBody, Spread, Statement, UnaryOp},
+    common::{TLError, TLResult},
+    parser::{
+        grammar::{BinaryOp, Expression, Field, LambdaBody, Spread, Statement, UnaryOp},
+        identifier::{Identifier, IdentifierEncoder},
+    },
 };
 use std::convert::TryFrom;
 
@@ -17,8 +20,8 @@ pub enum DExpression {
     String(String),
     Identifier(String),
     List(Vec<Spread<DExpression>>),
-    Call(Box<DExpression>, Vec<Spread<DExpression>>),
-    Member(Box<DExpression>, String),
+    Call(bool, Box<DExpression>, Vec<Spread<DExpression>>),
+    Member(bool, Box<DExpression>, String),
     Binary(BinaryOp, Box<DExpression>, Box<DExpression>),
     Unary(UnaryOp, Box<DExpression>),
     Lambda(Vec<String>, Option<String>, Vec<DStatement>),
@@ -43,6 +46,30 @@ pub enum LValue {
     Member(DExpression, String),
     Index(DExpression, DExpression),
     Identifier(String),
+}
+
+pub struct Desugarer {
+    ctx: IdentifierEncoder,
+}
+
+impl Desugarer {
+    pub fn new() -> Self {
+        Self {
+            ctx: IdentifierEncoder::new(),
+        }
+    }
+
+    pub fn desugar_lvalue(&mut self, stmt: Statement) -> TLResult<LValue> {
+        todo!()
+    }
+
+    pub fn desugar_statement(&mut self, stmt: Statement) -> TLResult<DStatement> {
+        todo!()
+    }
+
+    pub fn desugar_expression(&mut self, expr: Expression) -> TLResult<DExpression> {
+        todo!()
+    }
 }
 
 fn try_from_list<'a, E, T, U: TryFrom<&'a T, Error = E>>(items: &'a [T]) -> Result<Vec<U>, E> {
@@ -88,6 +115,13 @@ impl TryFrom<&Field> for DField {
     }
 }
 
+fn desugar_string(s: &str) -> String {
+    let mut out = s.replace("\\n", "\n");
+    out = out.replace("\\t", "\t");
+    out = out.replace("\\r", "\r");
+    out
+}
+
 impl TryFrom<&Expression> for DExpression {
     type Error = TLError;
 
@@ -97,16 +131,17 @@ impl TryFrom<&Expression> for DExpression {
             Expression::Int(i) => Ok(DExpression::Number(*i as f64)),
             Expression::Float(f) => Ok(DExpression::Number(*f)),
             Expression::Boolean(b) => Ok(DExpression::Boolean(*b)),
-            Expression::Call(function, args) => {
+            Expression::Call(is_try, function, args) => {
                 let function = Self::try_from(function.as_ref())?;
                 let args = try_from_list(args)?;
-                Ok(DExpression::Call(Box::new(function), args))
+                Ok(DExpression::Call(*is_try, Box::new(function), args))
             }
             Expression::New(class, args) => {
                 let class = Self::try_from(class.as_ref())?;
                 let args = try_from_list(args)?;
                 Ok(DExpression::Call(
-                    Box::new(DExpression::Member(Box::new(class), "new".into())),
+                    false,
+                    Box::new(DExpression::Member(false, Box::new(class), "new".into())),
                     args,
                 ))
             }
@@ -115,10 +150,10 @@ impl TryFrom<&Expression> for DExpression {
                 Ok(DExpression::List(list))
             }
             Expression::Identifier(i) => Ok(DExpression::Identifier(i.clone())),
-            Expression::String(s) => Ok(DExpression::String(s.clone())),
-            Expression::Member(item, field) => {
+            Expression::String(s) => Ok(DExpression::String(desugar_string(s))),
+            Expression::Member(is_try, item, field) => {
                 let item = Self::try_from(item.as_ref())?;
-                Ok(DExpression::Member(Box::new(item), field.clone()))
+                Ok(DExpression::Member(*is_try, Box::new(item), field.clone()))
             }
             Expression::Binary(op, lhs, rhs) => {
                 let lhs = Self::try_from(lhs.as_ref())?;
@@ -147,13 +182,13 @@ impl TryFrom<&Expression> for DExpression {
                 let rhs = Self::try_from(rhs.as_ref())?;
 
                 match rhs {
-                    DExpression::Call(f, mut args) => {
+                    DExpression::Call(is_try, f, mut args) => {
                         let mut new_args = vec![Spread {
                             is_spread: false,
                             value: lhs,
                         }];
                         new_args.append(&mut args);
-                        Ok(DExpression::Call(f, new_args))
+                        Ok(DExpression::Call(is_try, f, new_args))
                     }
                     other => Err(TLError::Syntax(format!(
                         "expected function call, found {:?}",
@@ -170,7 +205,7 @@ impl TryFrom<&Expression> for LValue {
 
     fn try_from(expr: &Expression) -> Result<Self, Self::Error> {
         match expr {
-            Expression::Member(item, field) => {
+            Expression::Member(false, item, field) => {
                 let item = DExpression::try_from(item.as_ref())?;
                 Ok(LValue::Member(item, field.clone()))
             }
@@ -201,7 +236,12 @@ impl TryFrom<&Statement> for DStatement {
                         false,
                         "__iter__".to_string(),
                         DExpression::Call(
-                            Box::new(DExpression::Member(Box::new(expr), "iter".to_string())),
+                            false,
+                            Box::new(DExpression::Member(
+                                false,
+                                Box::new(expr),
+                                "iter".to_string(),
+                            )),
                             Vec::new(),
                         ),
                     ),
@@ -210,7 +250,9 @@ impl TryFrom<&Statement> for DStatement {
                             false,
                             name.clone(),
                             DExpression::Call(
+                                false,
                                 Box::new(DExpression::Member(
+                                    false,
                                     Box::new(DExpression::Identifier("__iter__".to_string())),
                                     "next".to_string(),
                                 )),
@@ -305,10 +347,10 @@ impl TryFrom<&Statement> for DStatement {
                         is_spread: false,
                     };
                     let extend = DExpression::Identifier("__extend_class__".to_string());
-                    DExpression::Call(Box::new(extend), vec![parent, obj])
+                    DExpression::Call(false, Box::new(extend), vec![parent, obj])
                 } else {
                     let define = DExpression::Identifier("__define_class__".to_string());
-                    DExpression::Call(Box::new(define), vec![obj])
+                    DExpression::Call(false, Box::new(define), vec![obj])
                 };
 
                 Ok(DStatement::Definition(*is_pub, name.clone(), class))

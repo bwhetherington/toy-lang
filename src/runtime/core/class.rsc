@@ -1,4 +1,4 @@
-let ClassCore = {
+pub let Class = {
   create() {
     return create_object(self, {})
   },
@@ -10,14 +10,14 @@ let ClassCore = {
   },
 }
 
-pub fn __define_class__(Class) {
-  return create_object(ClassCore, Class)
+pub fn __define_class__(NewClass) {
+  return create_object(Class, NewClass)
 }
 
-pub fn __extend_class__(Base, Class) {
-  return __define_class__(create_object(Class, {
+pub fn __extend_class__(Base, NewClass) {
+  return __define_class__(create_object(NewClass, {
     create() {
-      let base_instance = create_object(Base, Class)
+      let base_instance = create_object(Base, NewClass)
       return create_object(base_instance, {})
     },
   }))

@@ -220,7 +220,7 @@ impl Engine {
                     self.extract_expr_to(value, map, ignore);
                 }
             }
-            DExpression::Call(f, args) => {
+            DExpression::Call(_, f, args) => {
                 self.extract_expr_to(f.as_ref(), map, ignore);
                 for Spread { value, .. } in args {
                     self.extract_expr_to(value, map, ignore);
@@ -231,7 +231,7 @@ impl Engine {
                 self.extract_expr_to(lhs.as_ref(), map, ignore);
                 self.extract_expr_to(rhs.as_ref(), map, ignore);
             }
-            DExpression::Member(obj, _) => self.extract_expr_to(obj.as_ref(), map, ignore),
+            DExpression::Member(_, obj, _) => self.extract_expr_to(obj.as_ref(), map, ignore),
             DExpression::Object(decls) => {
                 for DField { value, .. } in decls {
                     self.extract_expr_to(value, map, ignore);
@@ -367,6 +367,8 @@ impl Engine {
                 (NotEquals, x, y) => Ok(Boolean(!self.eval_equals(&x, &y))),
                 (LogicOr, Boolean(x), Boolean(y)) => Ok(Boolean(x || y)),
                 (LogicAnd, Boolean(x), Boolean(y)) => Ok(Boolean(x && y)),
+                (Elvis, None, y) => Ok(y),
+                (Elvis, x, _) => Ok(x),
                 (op, lhs, rhs) => Err(TLError::Syntax(format!(
                     "{:?} {:?} {:?} is not supported",
                     op, lhs, rhs
@@ -445,6 +447,7 @@ impl Engine {
     fn get_fields(&self, value: &Value) -> TLResult<Option<Ptr<Object>>> {
         match value {
             Value::Object(obj) => Ok(Some(obj.clone())),
+            Value::None => Err(type_error("!None", &Value::None)),
             other => self.get_proto(other),
         }
     }
@@ -498,8 +501,13 @@ impl Engine {
         }
     }
 
-    fn eval_member(&mut self, obj: &DExpression, field: &str) -> TLResult<Value> {
+    fn eval_member(&mut self, obj: &DExpression, field: &str, is_try: bool) -> TLResult<Value> {
         let parent = self.eval_expr(obj)?;
+        if is_try {
+            if let Value::None = parent {
+                return Ok(parent);
+            }
+        }
         self.eval_field(&parent, field)
     }
 
@@ -639,9 +647,12 @@ impl Engine {
                 self.create_closure(params, last, body)
             ))),
             DExpression::String(s) => Ok(Value::String(s.to_string().into())),
-            DExpression::Call(f, args) => {
+            DExpression::Call(is_try, f, args) => {
                 let f = self.eval_expr(f)?;
-                self.call(&f, args)
+                match f {
+                    Value::None if *is_try => Ok(Value::None),
+                    other => self.call(&other, args),
+                }
             }
             DExpression::Object(fields) => {
                 let mut obj = Object::new();
@@ -653,7 +664,7 @@ impl Engine {
 
                 Ok(Value::Object(ptr(obj)))
             }
-            DExpression::Member(obj, field) => self.eval_member(obj, field),
+            DExpression::Member(is_try, obj, field) => self.eval_member(obj, field, *is_try),
         }
     }
 

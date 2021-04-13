@@ -1,4 +1,8 @@
-use crate::{common::TLError, module::ModuleLoader, parser::DStatement};
+use crate::{
+    common::{Str, TLError},
+    module::ModuleLoader,
+    parser::DStatement,
+};
 
 use std::{cell::RefCell, collections::HashMap, fmt, ops::Deref, rc::Rc};
 
@@ -147,5 +151,3 @@ pub fn ref_eq<T>(a: impl Deref<Target = T>, b: impl Deref<Target = T>) -> bool {
     let b = b.deref() as *const T;
     a == b
 }
-
-pub type Str = Rc<str>;

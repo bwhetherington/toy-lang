@@ -17,6 +17,7 @@ pub enum BinaryOp {
     LogicAnd,
     LogicOr,
     Index,
+    Elvis,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -52,8 +53,8 @@ pub enum Expression {
     Identifier(String),
     String(String),
     List(Vec<Spread<Expression>>),
-    Call(Box<Expression>, Vec<Spread<Expression>>),
-    Member(Box<Expression>, String),
+    Call(bool, Box<Expression>, Vec<Spread<Expression>>),
+    Member(bool, Box<Expression>, String),
     Binary(BinaryOp, Box<Expression>, Box<Expression>),
     Unary(UnaryOp, Box<Expression>),
     Lambda(Vec<String>, Option<String>, LambdaBody),
@@ -243,7 +244,7 @@ parser!(pub grammar parser() for str {
 
     rule constructor() -> Expression = precedence! {
         x:@ _ "[" _ y:expr() _ "]" { binary(BinaryOp::Index, x, y) }
-        x:@ _ "." _ y:identifier() { Expression::Member(Box::new(x), y.to_string()) }
+        x:@ _ "." _ y:identifier() { Expression::Member(false, Box::new(x), y.to_string()) }
         --
         x:atom() { x }
     }
@@ -253,9 +254,11 @@ parser!(pub grammar parser() for str {
 
     rule primary_expr() -> Expression = precedence! {
         x:@ _ "[" _ y:expr() _ "]" { binary(BinaryOp::Index, x, y) }
-        x:@ _ "." _ y:identifier() { Expression::Member(Box::new(x), y.to_string()) }
+        x:@ _ "?." _ y:identifier() { Expression::Member(true, Box::new(x), y.to_string()) }
+        x:@ _ "." _ y:identifier() { Expression::Member(false, Box::new(x), y.to_string()) }
         --
-        x:@ _ l:arg_list() { Expression::Call(Box::new(x), l) }
+        x:@ _ "?." _ l:arg_list() { Expression::Call(true, Box::new(x), l) }
+        x:@ _ l:arg_list() { Expression::Call(false, Box::new(x), l) }
         --
         x:atom() { x }
     }
@@ -287,6 +290,8 @@ parser!(pub grammar parser() for str {
         x:(@) _ "%" _ y:@ { binary(BinaryOp::Mod, x, y) }
         --
         x:@ _ "^" _ y:(@) { binary(BinaryOp::Power, x, y) }
+        --
+        x:(@) _ "??" _ y:@ { binary(BinaryOp::Elvis, x, y) }
         --
         e:primary_expr() { e }
         --

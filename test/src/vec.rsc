@@ -1,3 +1,5 @@
+let StringBuilder = import("std/string.rsc").StringBuilder
+
 fn max(a, b) {
   if b > a {
     return b
@@ -43,6 +45,21 @@ pub class Matrix {
     return output
   }
 
+  translation(dx, dy) {
+    // return 10
+    let output = Matrix.identity(3)
+    output.set(0, 2, dx)
+    output.set(1, 2, dy)
+    return output
+  }
+
+  scale(sx, sy) {
+    let output = Matrix.identity(3)
+    output.set(0, 0, sx)
+    output.set(1, 1, sy)
+    return output
+  }
+
   rotation(theta) {
 
   }
@@ -78,6 +95,17 @@ pub class Matrix {
     return self.shape[0]
   }
 
+  rows_indices_iter() {
+    let n_rows = self.rows()
+    let n_cols = self.cols()
+    return (new Range(0, n_rows))
+      .map((row_index) => (new Range(0, n_cols)))
+  }
+
+  cols_indices_iter() {
+
+  }
+
   cols() {
     return self.shape[1]
   }
@@ -89,11 +117,19 @@ pub class Matrix {
     }
   }
 
+  get_coords(pt) {
+    return self.get(pt[0], pt[1])
+  }
+
   set(row, col, val) {
     if self._in_bounds(row, col) {
       let index = self._index(row, col)
       self._data[index] = val
     }
+  }
+
+  set_coords(pt, val) {
+    self.set(pt[0], pt[1], val)
   }
 
   multiply(other) {
@@ -125,43 +161,37 @@ pub class Matrix {
 
     return output
   }
+
+  str() {
+    let sb = new StringBuilder()
+    let rows = self.rows()
+    let cols = self.cols()
+
+    for row in new Range(0, rows) {
+      for col in new Range(0, cols) {
+        sb.push(self.get(row, col))
+        sb.push(" ")
+      }
+      sb.push("\n")
+    }
+
+    sb.pop()
+
+    return sb.str()
+  }
 }
 
-pub class Vec2 {
-  init(x, y) {
-    self.x = x
-    self.y = y
-  }
+pub fn vec2(x, y) {
+  return Matrix.data([
+    [x],
+    [y],
+  ])
+}
 
-  plus(other) {
-    return new Vec2(self.x + other.x, self.y + other.y)
-  }
-
-  multiply(other) {
-    if instance_of(other, Number) {
-      return new Vec2(self.x * other, self.y * other)
-    } else {
-      return new Vec2(self.x * other.x, self.y * other.y)
-    }
-  }
-
-  equals(other) {
-    if True {
-      return (self.x == other.x) && (self.y == other.y)
-    } else {
-      return False
-    }
-  }
-
-  magnitude2() {
-    return self.x * self.x + self.y * self.y
-  }
-
-  magnitude() {
-    return sqrt(self.magnitude2())
-  }
-
-  angle() {
-    return atan2(self.y, self.x)
-  }
+pub fn vec3(x, y, z) {
+  return Matrix.data([
+    [x],
+    [y],
+    [z],
+  ])
 }

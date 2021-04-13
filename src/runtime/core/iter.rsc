@@ -77,6 +77,31 @@ class Map : Iterator {
   }
 }
 
+class FlatMap : Iterator {
+  init(base, f) {
+    super.init()
+    self._base = base
+    self._f = f
+    self._cur_iter = None
+  }
+
+  next() {
+    // If we have a current subiterator
+    let next = self._cur_iter?.next?.()
+    if next != None {
+      return next
+    }
+
+    // Otherwise create a new one
+    let next_base = self._base.next()
+    if next_base != None {
+      let next_iter = self._f(next_base)?.iter?.()
+      self._cur_iter = next_iter
+      return next_iter.next()
+    }
+  }
+}
+
 class Skip : Iterator {
   init(base, amount) {
     super.init()
@@ -117,6 +142,7 @@ class Enumerate : Iterator {
 
 Iterator.filter = (f) => new Filter(self, f)
 Iterator.map = (f) => new Map(self, f)
+Iterator.flat_map = (f) => new FlatMap(self, f)
 Iterator.skip = (amount) => new Skip(self, amount)
 Iterator.enumerate = () => new Enumerate(self)
 
