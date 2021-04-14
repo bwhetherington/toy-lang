@@ -1,7 +1,8 @@
-use std::collections::HashSet;
+use crate::parser::Identifier;
+use nohash_hasher::IntSet as HashSet;
 
 pub struct IgnoreScope {
-    ignored: Vec<HashSet<String>>,
+    ignored: Vec<HashSet<usize>>,
 }
 
 impl IgnoreScope {
@@ -12,25 +13,24 @@ impl IgnoreScope {
     }
 
     pub fn push(&mut self) {
-        self.ignored.push(HashSet::new());
+        self.ignored.push(HashSet::default());
     }
 
     pub fn pop(&mut self) {
         self.ignored.pop();
     }
 
-    pub fn insert(&mut self, s: impl Into<String>) {
+    pub fn insert(&mut self, s: Identifier) {
         if let Some(scope) = self.ignored.last_mut() {
-            scope.insert(s.into());
+            scope.insert(s.0);
         }
     }
 
-    pub fn contains(&self, s: impl AsRef<str>) -> bool {
-        let s = s.as_ref();
+    pub fn contains(&self, s: Identifier) -> bool {
         self.ignored
             .iter()
             .rev()
-            .filter(|scope| scope.contains(s))
+            .filter(|scope| scope.contains(&s.0))
             .next()
             .is_some()
     }

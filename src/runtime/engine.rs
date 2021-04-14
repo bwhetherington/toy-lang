@@ -3,7 +3,7 @@ use crate::{
     common::{Str, TLError, TLResult},
     module::ModuleLoader,
     parser::{
-        desugar_statements, module, BinaryOp, DExpression, DField, DStatement, LValue, Spread,
+        module, BinaryOp, DExpression, DField, DStatement, Desugarer, Identifier, LValue, Spread,
         UnaryOp,
     },
     runtime::{
@@ -13,12 +13,63 @@ use crate::{
 };
 use std::{collections::HashMap, mem, rc::Rc};
 
+#[derive(Debug)]
+struct Identifiers {
+    // Prototypes
+    number_proto: Identifier,
+    boolean_proto: Identifier,
+    string_proto: Identifier,
+    list_proto: Identifier,
+    object_proto: Identifier,
+    function_proto: Identifier,
+
+    // Core identifiers
+    self_ident: Identifier,
+    super_ident: Identifier,
+
+    // Operators
+    plus: Identifier,
+    minus: Identifier,
+    multiply: Identifier,
+    divide: Identifier,
+    modulo: Identifier,
+    exponentiate: Identifier,
+    iter: Identifier,
+    next: Identifier,
+}
+
+fn create_identifiers(ctx: &mut Desugarer) -> Identifiers {
+    Identifiers {
+        number_proto: ctx.identifier("Number"),
+        boolean_proto: ctx.identifier("Boolean"),
+        string_proto: ctx.identifier("Boolean"),
+        list_proto: ctx.identifier("List"),
+        object_proto: ctx.identifier("Object"),
+        function_proto: ctx.identifier("Function"),
+
+        self_ident: ctx.identifier("self"),
+        super_ident: ctx.identifier("super"),
+
+        plus: ctx.identifier("plus"),
+        minus: ctx.identifier("minus"),
+        multiply: ctx.identifier("multiply"),
+        divide: ctx.identifier("divide"),
+        modulo: ctx.identifier("modulo"),
+        exponentiate: ctx.identifier("exponentiate"),
+        iter: ctx.identifier("iter"),
+        next: ctx.identifier("next"),
+    }
+}
+
+#[derive(Debug)]
 pub struct Engine {
     env: Env,
+    pub desugarer: Desugarer,
     ret_val: Value,
     loader: Box<dyn ModuleLoader>,
     module_stack: Vec<Str>,
     module_cache: HashMap<Str, Value>,
+    idents: Identifiers,
 }
 
 pub type EvalResult<T> = TLResult<T>;
@@ -43,9 +94,13 @@ impl Iterator for NoneIterator {
 
 impl Engine {
     pub fn from_dyn_loader(loader: Box<dyn ModuleLoader>) -> Engine {
+        let mut desugarer = Desugarer::new();
+        let idents = create_identifiers(&mut desugarer);
         let mut engine = Engine {
             env: Env::new(),
             ret_val: Value::None,
+            desugarer,
+            idents,
             loader,
             module_stack: Vec::new(),
             module_cache: HashMap::new(),
@@ -66,7 +121,7 @@ impl Engine {
     pub fn eval_module_with(
         &mut self,
         module: &[DStatement],
-        mut define: impl FnMut(&str, Value) -> (),
+        mut define: impl FnMut(Identifier, Value) -> (),
     ) -> TLResult<()> {
         self.env.push();
         for stmt in module {
@@ -76,17 +131,21 @@ impl Engine {
         Ok(())
     }
 
-    fn run_src_with(&mut self, src: &str, define: impl FnMut(&str, Value) -> ()) -> TLResult<()> {
+    fn run_src_with(
+        &mut self,
+        src: &str,
+        define: impl FnMut(Identifier, Value) -> (),
+    ) -> TLResult<()> {
         let full_src = format!("{}\n", src);
         let stage_one = module(&full_src)?;
-        let stage_two = desugar_statements(&stage_one)?;
+        let stage_two = self.desugarer.statement_list(&stage_one)?;
         self.eval_module_with(&stage_two, define)
     }
 
-    pub fn run_src_map(&mut self, src: &str) -> TLResult<HashMap<String, Value>> {
+    pub fn run_src_map(&mut self, src: &str) -> TLResult<HashMap<Identifier, Value>> {
         let mut export = HashMap::new();
         self.run_src_with(src, |name, value| {
-            export.insert(name.to_string(), value);
+            export.insert(name, value);
         })?;
         Ok(export)
     }
@@ -154,11 +213,28 @@ impl Engine {
     }
 
     pub fn define(&mut self, name: impl Into<String>, val: Value) {
-        self.env.insert(name, val);
+        let ident = self.get_ident(name);
+        self.env.insert(ident, val);
+    }
+
+    pub fn set_global(&mut self, key: Identifier, val: Value) {
+        self.env.insert_global(key, val);
     }
 
     pub fn define_global(&mut self, name: impl Into<String>, val: Value) {
-        self.env.insert_global(name, val);
+        let ident = self.get_ident(name);
+        self.set_global(ident, val);
+    }
+
+    fn get_name(&self, ident: Identifier) -> String {
+        self.desugarer
+            .reverse_identifier(ident)
+            .map(|s| s.clone())
+            .unwrap_or_else(|| "<unknown>".to_string())
+    }
+
+    fn get_ident(&mut self, name: impl Into<String>) -> Identifier {
+        self.desugarer.identifier(name)
     }
 
     pub fn define_builtin(
@@ -170,16 +246,22 @@ impl Engine {
         self.define(name, f);
     }
 
-    fn lookup(&self, key: impl AsRef<str>) -> EvalResult<&Value> {
+    fn lookup(&self, key: Identifier) -> EvalResult<&Value> {
         self.env
-            .get(key.as_ref())
-            .ok_or_else(|| TLError::Undefined(key.as_ref().to_string()))
+            .get(key)
+            .ok_or_else(|| TLError::Undefined(self.get_name(key)))
     }
 
-    fn lookup_mut(&mut self, key: impl AsRef<str>) -> EvalResult<&mut Value> {
-        self.env
-            .get_mut(key.as_ref())
-            .ok_or_else(|| TLError::Undefined(key.as_ref().to_string()))
+    fn lookup_mut(&mut self, key: Identifier) -> EvalResult<&mut Value> {
+        match self.env.get_mut(key) {
+            Some(val) => Ok(val),
+            None => Err(TLError::Undefined(
+                self.desugarer
+                    .reverse_identifier(key)
+                    .cloned()
+                    .unwrap_or_else(|| "<unknown>".to_string()),
+            )),
+        }
     }
 
     fn extract_statement_to(&self, stmt: &DStatement, map: &mut Scope, ignore: &mut IgnoreScope) {
@@ -192,7 +274,7 @@ impl Engine {
                 ignore.pop();
             }
             DStatement::Definition(_, name, value) => {
-                ignore.insert(name);
+                ignore.insert(*name);
                 self.extract_expr_to(value, map, ignore);
             }
             DStatement::Return(val) => self.extract_expr_to(val, map, ignore),
@@ -210,9 +292,9 @@ impl Engine {
 
     fn extract_expr_to(&self, expr: &DExpression, map: &mut Scope, ignore: &mut IgnoreScope) {
         match expr {
-            DExpression::Identifier(i) if !ignore.contains(i) => {
-                if let Ok(value) = self.lookup(i) {
-                    map.insert(i.clone(), value.clone());
+            DExpression::Identifier(i) if !ignore.contains(*i) => {
+                if let Ok(value) = self.lookup(*i) {
+                    map.insert(i.0, value.clone());
                 }
             }
             DExpression::List(list) => {
@@ -242,7 +324,7 @@ impl Engine {
                 ignore.push();
                 let iter = params.iter().chain(last.iter());
                 for param in iter {
-                    ignore.insert(param);
+                    ignore.insert(*param);
                 }
                 for stmt in body {
                     self.extract_statement_to(stmt, map, ignore);
@@ -255,19 +337,19 @@ impl Engine {
 
     fn create_closure(
         &self,
-        params: &Vec<String>,
-        last: &Option<String>,
+        params: &Vec<Identifier>,
+        last: &Option<Identifier>,
         body: &Vec<DStatement>,
     ) -> Function {
         let mut ignore = IgnoreScope::new();
-        let mut closure = Scope::new();
+        let mut closure = Scope::default();
 
         ignore.push();
-        ignore.insert("self");
-        ignore.insert("super");
+        ignore.insert(self.idents.self_ident);
+        ignore.insert(self.idents.super_ident);
 
         for param in params.iter().chain(last.iter()) {
-            ignore.insert(param);
+            ignore.insert(*param);
         }
 
         for stmt in body {
@@ -290,9 +372,9 @@ impl Engine {
         val: &Value,
         mut f: impl FnMut(&Value) -> TLResult<()>,
     ) -> TLResult<()> {
-        let iter = self.eval_method(val, "iter", &[])?;
+        let iter = self.eval_method(val, self.idents.iter, &[])?;
         loop {
-            match self.eval_method(&iter, "next", &[])? {
+            match self.eval_method(&iter, self.idents.next, &[])? {
                 Value::None => break,
                 other => f(&other)?,
             }
@@ -343,17 +425,17 @@ impl Engine {
         match (op, lhs, rhs) {
             (op, Ok(lhs), Ok(rhs)) => match (op, lhs, rhs) {
                 (Add, Number(x), Number(y)) => Ok(Number(x + y)),
-                (Add, x, y) => self.eval_method(&x, "plus", &[y]),
+                (Add, x, y) => self.eval_method(&x, self.idents.plus, &[y]),
                 (Subtract, Number(x), Number(y)) => Ok(Number(x - y)),
-                (Subtract, x, y) => self.eval_method(&x, "subtract", &[y]),
+                (Subtract, x, y) => self.eval_method(&x, self.idents.minus, &[y]),
                 (Multiply, Number(x), Number(y)) => Ok(Number(x * y)),
-                (Multiply, x, y) => self.eval_method(&x, "multiply", &[y]),
+                (Multiply, x, y) => self.eval_method(&x, self.idents.multiply, &[y]),
                 (Divide, Number(x), Number(y)) => Ok(Number(x / y)),
-                (Divide, x, y) => self.eval_method(&x, "divide", &[y]),
+                (Divide, x, y) => self.eval_method(&x, self.idents.divide, &[y]),
                 (Mod, Number(x), Number(y)) => Ok(Number(x % y)),
-                (Mod, x, y) => self.eval_method(&x, "modulo", &[y]),
+                (Mod, x, y) => self.eval_method(&x, self.idents.modulo, &[y]),
                 (Power, Number(x), Number(y)) => Ok(Number(x.powf(y))),
-                (Power, x, y) => self.eval_method(&x, "exponentiate", &[y]),
+                (Power, x, y) => self.eval_method(&x, self.idents.exponentiate, &[y]),
                 (GT, Number(x), Number(y)) => Ok(Boolean(x > y)),
                 (GTE, Number(x), Number(y)) => Ok(Boolean(x >= y)),
                 (LT, Number(x), Number(y)) => Ok(Boolean(x < y)),
@@ -383,49 +465,42 @@ impl Engine {
     }
 
     fn get_string_proto(&self) -> TLResult<Ptr<Object>> {
-        match self.lookup("String")? {
+        match self.lookup(self.idents.string_proto)? {
             Value::Object(obj) => Ok(obj.clone()),
             other => Err(type_error("Object", other)),
         }
     }
 
     fn get_list_proto(&self) -> TLResult<Ptr<Object>> {
-        match self.lookup("List")? {
+        match self.lookup(self.idents.list_proto)? {
             Value::Object(obj) => Ok(obj.clone()),
             other => Err(type_error("Object", other)),
         }
     }
 
     fn get_number_proto(&self) -> TLResult<Ptr<Object>> {
-        match self.lookup("Number")? {
+        match self.lookup(self.idents.number_proto)? {
             Value::Object(obj) => Ok(obj.clone()),
             other => Err(type_error("Object", other)),
         }
     }
 
     fn get_boolean_proto(&self) -> TLResult<Ptr<Object>> {
-        match self.lookup("Boolean")? {
+        match self.lookup(self.idents.boolean_proto)? {
             Value::Object(obj) => Ok(obj.clone()),
             other => Err(type_error("Object", other)),
         }
     }
 
     fn get_function_proto(&self) -> TLResult<Ptr<Object>> {
-        match self.lookup("Function")? {
+        match self.lookup(self.idents.function_proto)? {
             Value::Object(obj) => Ok(obj.clone()),
             other => Err(type_error("Object", other)),
         }
     }
 
     fn get_object_proto(&self) -> TLResult<Ptr<Object>> {
-        match self.lookup("Object")? {
-            Value::Object(obj) => Ok(obj.clone()),
-            other => Err(type_error("Object", other)),
-        }
-    }
-
-    fn get_none_proto(&self) -> TLResult<Ptr<Object>> {
-        match self.lookup("NoneProto")? {
+        match self.lookup(self.idents.object_proto)? {
             Value::Object(obj) => Ok(obj.clone()),
             other => Err(type_error("Object", other)),
         }
@@ -466,7 +541,7 @@ impl Engine {
             Value::Number(..) => self.get_number_proto().map(Some),
             Value::Boolean(..) => self.get_boolean_proto().map(Some),
             Value::Function(..) | Value::Builtin(..) => self.get_function_proto().map(Some),
-            Value::None => self.get_none_proto().map(Some),
+            _ => Ok(None),
         }
     }
 
@@ -475,12 +550,12 @@ impl Engine {
         Ok(proto_obj.map(Value::Object))
     }
 
-    fn eval_method(&mut self, obj: &Value, method: &str, args: &[Value]) -> TLResult<Value> {
+    fn eval_method(&mut self, obj: &Value, method: Identifier, args: &[Value]) -> TLResult<Value> {
         let val = self.eval_field(obj, method)?;
         self.call_internal(&val, args)
     }
 
-    fn eval_field(&mut self, parent: &Value, field: &str) -> TLResult<Value> {
+    fn eval_field(&mut self, parent: &Value, field: Identifier) -> TLResult<Value> {
         let obj = self.get_fields(parent)?;
 
         let val = obj
@@ -501,7 +576,12 @@ impl Engine {
         }
     }
 
-    fn eval_member(&mut self, obj: &DExpression, field: &str, is_try: bool) -> TLResult<Value> {
+    fn eval_member(
+        &mut self,
+        obj: &DExpression,
+        field: Identifier,
+        is_try: bool,
+    ) -> TLResult<Value> {
         let parent = self.eval_expr(obj)?;
         if is_try {
             if let Value::None = parent {
@@ -584,11 +664,12 @@ impl Engine {
 
         // Insert self
         if let Some(self_value) = self_value {
-            self.env.insert("self", self_value.clone());
+            self.env.insert(self.idents.self_ident, self_value.clone());
 
             if let Value::Object(obj) = self_value {
                 if let Some(super_value) = obj.borrow().super_proto() {
-                    self.env.insert("super", Value::Object(super_value));
+                    self.env
+                        .insert(self.idents.super_ident, Value::Object(super_value));
                 }
             }
         }
@@ -596,7 +677,7 @@ impl Engine {
         // Insert arguments at parameters
         let param_pairs = params.iter().zip(args_iter);
         for (param, arg) in param_pairs {
-            self.env.insert(param, arg.clone());
+            self.env.insert(*param, arg.clone());
         }
 
         // Insert any remaining parameters into a list
@@ -610,12 +691,12 @@ impl Engine {
                 vec![]
             };
             let rest = Value::List(ptr(rest));
-            self.env.insert(last, rest);
+            self.env.insert(*last, rest);
         }
 
         // Insert variables from closure
         for (key, value) in closure {
-            self.env.insert(key, value.clone());
+            self.env.insert(Identifier(*key), value.clone());
         }
 
         let end = self.eval_block(EngineState::Run, &body)?;
@@ -630,13 +711,39 @@ impl Engine {
         Ok(val)
     }
 
+    fn eval_line(&mut self, line: &str) -> Result<(), TLError> {
+        let parsed = crate::parser::grammar::parser::expr(&line)?;
+        let body = self.desugarer.expression(&parsed)?;
+        let res = self.eval_expr(&body)?;
+        match res {
+            Value::None => (),
+            other => println!("{}", self.val_str(&other)),
+        }
+        Ok(())
+    }
+
+    fn execute_line(&mut self, line: &str) -> Result<(), TLError> {
+        let parsed = crate::parser::grammar::parser::statement(&format!("{}\n", line))?;
+        let body = self.desugarer.statement(&parsed)?;
+        self.eval_stmt(EngineState::Run, &body, &mut |_, _| {})?;
+        Ok(())
+    }
+
+    pub fn process_line(&mut self, line: &str) -> Result<(), TLError> {
+        let try_expr = self.eval_line(line);
+        if try_expr.is_err() {
+            self.execute_line(line)?;
+        }
+        Ok(())
+    }
+
     pub fn eval_expr(&mut self, expr: &DExpression) -> EvalResult<Value> {
         // println!("eval {:?}", expr);
         match expr {
             DExpression::None => Ok(Value::None),
             DExpression::Number(n) => Ok(Value::Number(*n)),
             DExpression::Boolean(b) => Ok(Value::Boolean(*b)),
-            DExpression::Identifier(key) => self.lookup(key).map(Clone::clone),
+            DExpression::Identifier(key) => self.lookup(*key).map(Clone::clone),
             DExpression::List(exprs) => {
                 let vals: Vec<_> = self.eval_spread_list(exprs)?;
                 Ok(Value::List(ptr(vals)))
@@ -659,12 +766,12 @@ impl Engine {
 
                 for DField { name, value } in fields {
                     let value = self.eval_expr(value)?;
-                    obj.insert(name, value);
+                    obj.insert(*name, value);
                 }
 
                 Ok(Value::Object(ptr(obj)))
             }
-            DExpression::Member(is_try, obj, field) => self.eval_member(obj, field, *is_try),
+            DExpression::Member(is_try, obj, field) => self.eval_member(obj, *field, *is_try),
         }
     }
 
@@ -675,7 +782,7 @@ impl Engine {
     ) -> EvalResult<()> {
         match loc {
             LValue::Identifier(i) => {
-                let loc = self.lookup_mut(i)?;
+                let loc = self.lookup_mut(*i)?;
                 f(loc)
             }
             LValue::Index(x, y) => {
@@ -700,7 +807,7 @@ impl Engine {
                 match obj {
                     Value::Object(obj) => {
                         let mut obj = obj.borrow_mut();
-                        obj.mutate_field(field, f)
+                        obj.mutate_field(*field, f)
                     }
                     other => Err(type_error("Object", &other)),
                 }
@@ -730,7 +837,7 @@ impl Engine {
         &mut self,
         state: EngineState,
         stmt: &DStatement,
-        define: &mut dyn FnMut(&str, Value) -> (),
+        define: &mut dyn FnMut(Identifier, Value) -> (),
     ) -> EvalResult<EngineState> {
         // println!("exe {:?}", stmt);
         match stmt {
@@ -776,11 +883,11 @@ impl Engine {
                 let mut value = self.eval_expr(value)?;
 
                 let rec_value = value.clone();
-                value.insert_recursive_reference(name, &rec_value);
+                value.insert_recursive_reference(*name, &rec_value);
                 if *is_pub {
-                    define(name, value.clone());
+                    define(*name, value.clone());
                 }
-                self.env.insert(name, value);
+                self.env.insert(*name, value);
                 Ok(state)
             }
             DStatement::Break => Ok(match state {
@@ -811,5 +918,30 @@ impl Engine {
     pub fn print_error(&self, err: &TLError) {
         eprintln!("{}", err);
         println!("{:#?}", self.module_stack);
+    }
+
+    pub fn val_str(&self, val: &Value) -> String {
+        match val {
+            Value::Boolean(true) => "True".to_string(),
+            Value::Boolean(false) => "False".to_string(),
+            Value::Number(n) => n.to_string(),
+            Value::None => "None".to_string(),
+            Value::Function(..) | Value::Builtin(..) => "<fn>".to_string(),
+            Value::String(s) => format!("\"{}\"", s),
+            Value::List(xs) => {
+                let inner: Vec<_> = xs.borrow().iter().map(|x| self.val_str(x)).collect();
+                format!("[{}]", inner.join(", "))
+            }
+            Value::Object(obj) => {
+                let obj = obj.borrow();
+                let mut inner = Vec::with_capacity(obj.len());
+                for (key, val) in obj.fields.borrow().iter() {
+                    let name = self.get_name(Identifier(*key));
+                    let val = self.val_str(val);
+                    inner.push(format!("{}: {}", name, val));
+                }
+                format!("{{{}}}", inner.join(", "))
+            }
+        }
     }
 }

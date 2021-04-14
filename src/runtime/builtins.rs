@@ -1,8 +1,8 @@
 use crate::{
     common::TLError,
+    parser::Desugarer,
     runtime::{builtin, ptr, type_error, Engine, Object, Value},
 };
-use std::rc::Rc;
 
 pub trait Init {
     type Error;
@@ -30,16 +30,16 @@ fn binary_fn(
     }
 }
 
-fn create_proto(init: impl Fn(&mut Object) -> ()) -> Value {
+fn create_proto(mut init: impl FnMut(&mut Object) -> ()) -> Value {
     let mut obj = Object::new();
     init(&mut obj);
     Value::Object(ptr(obj))
 }
 
-fn create_string_proto() -> Value {
+fn create_string_proto(ctx: &mut Desugarer) -> Value {
     create_proto(|obj| {
         obj.insert(
-            "len",
+            ctx.identifier("len"),
             builtin(|_, _, self_value| match self_value {
                 Some(Value::String(s)) => Ok(Value::Number(s.len() as f64)),
                 Some(other) => Err(type_error("String", other)),
@@ -47,7 +47,7 @@ fn create_string_proto() -> Value {
             }),
         );
         obj.insert(
-            "lower",
+            ctx.identifier("lower"),
             builtin(|_, _, self_value| match self_value {
                 Some(Value::String(s)) => Ok(Value::String(s.to_lowercase().into())),
                 Some(other) => Err(type_error("String", other)),
@@ -55,7 +55,7 @@ fn create_string_proto() -> Value {
             }),
         );
         obj.insert(
-            "upper",
+            ctx.identifier("upper"),
             builtin(|_, _, self_value| match self_value {
                 Some(Value::String(s)) => Ok(Value::String(s.to_uppercase().into())),
                 Some(other) => Err(type_error("String", other)),
@@ -63,7 +63,7 @@ fn create_string_proto() -> Value {
             }),
         );
         obj.insert(
-            "plus",
+            ctx.identifier("plus"),
             builtin(|args, _, self_value| match (self_value, args) {
                 (Some(Value::String(s)), [other, ..]) => {
                     let out_str = match other {
@@ -79,10 +79,10 @@ fn create_string_proto() -> Value {
     })
 }
 
-fn create_list_proto() -> Value {
+fn create_list_proto(ctx: &mut Desugarer) -> Value {
     create_proto(|obj| {
         obj.insert(
-            "len",
+            ctx.identifier("len"),
             builtin(|_, _, self_value| match self_value {
                 Some(Value::List(l)) => Ok(Value::Number(l.borrow().len() as f64)),
                 Some(other) => Err(type_error("List", other)),
@@ -91,7 +91,7 @@ fn create_list_proto() -> Value {
         );
 
         obj.insert(
-            "push",
+            ctx.identifier("push"),
             builtin(|args, _, self_value| match self_value {
                 Some(Value::List(l)) => {
                     let mut l = l.borrow_mut();
@@ -106,7 +106,7 @@ fn create_list_proto() -> Value {
         );
 
         obj.insert(
-            "pop",
+            ctx.identifier("pop"),
             builtin(|_, _, self_value| match self_value {
                 Some(Value::List(l)) => {
                     let mut l = l.borrow_mut();
@@ -155,12 +155,12 @@ impl Init for Engine {
             [] => Err(type_error("String", &Value::None)),
         });
 
-        fn builtin_print(args: &[Value]) {
+        fn builtin_print(args: &[Value], engine: &Engine) {
             let mut is_first = true;
             for arg in args {
                 let s = match arg {
                     Value::String(s) => s.to_string(),
-                    other => format!("{:?}", other),
+                    other => engine.val_str(other),
                 };
                 if !is_first {
                     print!(" ");
@@ -170,8 +170,8 @@ impl Init for Engine {
             }
         }
 
-        self.define_builtin("__print__", |args, _, _| {
-            builtin_print(args);
+        self.define_builtin("__print__", |args, engine, _| {
+            builtin_print(args, engine);
             Ok(Value::None)
         });
 
@@ -211,8 +211,12 @@ impl Init for Engine {
             _ => Ok(Value::Boolean(false)),
         });
 
-        self.define("List", create_list_proto());
-        self.define("String", create_string_proto());
+        let list_proto = create_list_proto(&mut self.desugarer);
+        self.define("List", list_proto);
+
+        let string_proto = create_string_proto(&mut self.desugarer);
+        self.define("String", string_proto);
+
         self.define("Number", create_number_proto());
         self.define("Boolean", create_boolean_proto());
         self.define("Function", create_function_proto());
@@ -225,8 +229,8 @@ impl Init for Engine {
         // Class support
         let class_src = include_str!("core/class.rsc");
         let class_decls = self.run_src_map(class_src)?;
-        for (name, value) in class_decls {
-            self.define_global(name, value);
+        for (key, value) in class_decls {
+            self.set_global(key, value);
         }
 
         self.pop_scope();
@@ -235,8 +239,8 @@ impl Init for Engine {
         // Iterator support
         let iter_src = include_str!("core/iter.rsc");
         let iter_decls = self.run_src_map(iter_src)?;
-        for (name, value) in iter_decls {
-            self.define_global(name, value);
+        for (key, value) in iter_decls {
+            self.set_global(key, value);
         }
 
         self.pop_scope();
@@ -249,8 +253,8 @@ impl Init for Engine {
         // IO functions
         let io_src = include_str!("core/io.rsc");
         let io_decls = self.run_src_map(io_src)?;
-        for (name, value) in io_decls {
-            self.define_global(name, value);
+        for (key, value) in io_decls {
+            self.set_global(key, value);
         }
 
         self.pop_scope();

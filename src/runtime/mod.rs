@@ -1,10 +1,11 @@
 use crate::{
     common::{Str, TLError},
     module::ModuleLoader,
-    parser::DStatement,
+    parser::{DStatement, Identifier},
 };
 
-use std::{cell::RefCell, collections::HashMap, fmt, ops::Deref, rc::Rc};
+use nohash_hasher::IntMap as HashMap;
+use std::{cell::RefCell, fmt, ops::Deref, rc::Rc};
 
 mod builtins;
 pub use builtins::Init;
@@ -18,7 +19,7 @@ pub use engine::{Engine, EngineState};
 pub use ignore::IgnoreScope;
 pub use obj::Object;
 
-pub type Scope = HashMap<String, Value>;
+pub type Scope = HashMap<usize, Value>;
 
 #[derive(Clone)]
 pub struct BuiltinFn {
@@ -38,8 +39,8 @@ pub fn builtin(
 #[derive(Debug, Clone)]
 pub struct Function {
     pub self_value: Option<Value>,
-    pub params: Vec<String>,
-    pub last: Option<String>,
+    pub params: Vec<Identifier>,
+    pub last: Option<Identifier>,
     pub body: Vec<DStatement>,
     pub closure: Scope,
 }
@@ -99,12 +100,12 @@ impl Value {
         }
     }
 
-    pub fn insert_recursive_reference(&mut self, name: &str, value: &Value) {
+    pub fn insert_recursive_reference(&mut self, name: Identifier, value: &Value) {
         match self {
             Value::Function(f) => {
                 let mut f = f.borrow_mut();
-                if !f.closure.contains_key(name) {
-                    f.closure.insert(name.to_string(), value.clone());
+                if !f.closure.contains_key(&name.0) {
+                    f.closure.insert(name.0, value.clone());
                 }
             }
             Value::Object(obj) => {
@@ -136,7 +137,11 @@ pub fn type_error(expected: impl Into<String>, found: &Value) -> TLError {
 
 pub fn init_engine(loader: impl ModuleLoader + 'static) -> Engine {
     let mut engine = Engine::new(loader);
-    engine.init().unwrap();
+
+    if let Err(e) = engine.init() {
+        println!("{:#?}", engine);
+        println!("{}", e);
+    }
     engine
 }
 
