@@ -4,7 +4,8 @@ use crate::{
     parser::{DStatement, Identifier},
 };
 
-use std::{cell::RefCell, collections::HashMap, fmt, ops::Deref, rc::Rc};
+use nohash_hasher::IntMap as HashMap;
+use std::{cell::RefCell, fmt, ops::Deref, rc::Rc};
 
 mod builtins;
 pub use builtins::Init;
@@ -18,7 +19,7 @@ pub use engine::{Engine, EngineState};
 pub use ignore::IgnoreScope;
 pub use obj::Object;
 
-pub type Scope = HashMap<Identifier, Value>;
+pub type Scope = HashMap<usize, Value>;
 
 #[derive(Clone)]
 pub struct BuiltinFn {
@@ -103,8 +104,8 @@ impl Value {
         match self {
             Value::Function(f) => {
                 let mut f = f.borrow_mut();
-                if !f.closure.contains_key(&name) {
-                    f.closure.insert(name, value.clone());
+                if !f.closure.contains_key(&name.0) {
+                    f.closure.insert(name.0, value.clone());
                 }
             }
             Value::Object(obj) => {

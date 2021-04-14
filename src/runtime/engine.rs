@@ -294,7 +294,7 @@ impl Engine {
         match expr {
             DExpression::Identifier(i) if !ignore.contains(*i) => {
                 if let Ok(value) = self.lookup(*i) {
-                    map.insert(i.clone(), value.clone());
+                    map.insert(i.0, value.clone());
                 }
             }
             DExpression::List(list) => {
@@ -342,7 +342,7 @@ impl Engine {
         body: &Vec<DStatement>,
     ) -> Function {
         let mut ignore = IgnoreScope::new();
-        let mut closure = Scope::new();
+        let mut closure = Scope::default();
 
         ignore.push();
         ignore.insert(self.idents.self_ident);
@@ -696,7 +696,7 @@ impl Engine {
 
         // Insert variables from closure
         for (key, value) in closure {
-            self.env.insert(*key, value.clone());
+            self.env.insert(Identifier(*key), value.clone());
         }
 
         let end = self.eval_block(EngineState::Run, &body)?;
@@ -936,7 +936,7 @@ impl Engine {
                 let obj = obj.borrow();
                 let mut inner = Vec::with_capacity(obj.len());
                 for (key, val) in obj.fields.borrow().iter() {
-                    let name = self.get_name(*key);
+                    let name = self.get_name(Identifier(*key));
                     let val = self.val_str(val);
                     inner.push(format!("{}: {}", name, val));
                 }

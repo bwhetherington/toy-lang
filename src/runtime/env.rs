@@ -2,7 +2,7 @@ use crate::{
     parser::Identifier,
     runtime::{Scope, Value},
 };
-use std::collections::HashMap;
+use nohash_hasher::IntMap as HashMap;
 
 #[derive(Debug)]
 pub struct Env {
@@ -15,7 +15,7 @@ impl Env {
     }
 
     pub fn push(&mut self) {
-        self.scopes.push(HashMap::new());
+        self.scopes.push(HashMap::default());
     }
 
     pub fn pop(&mut self) {
@@ -24,13 +24,13 @@ impl Env {
 
     pub fn insert_global(&mut self, key: Identifier, val: Value) -> Option<()> {
         let scope = self.scopes.first_mut()?;
-        scope.insert(key, val);
+        scope.insert(key.0, val);
         Some(())
     }
 
     pub fn insert(&mut self, key: Identifier, val: Value) -> Option<()> {
         let scope = self.scopes.last_mut()?;
-        scope.insert(key, val);
+        scope.insert(key.0, val);
         Some(())
     }
 
@@ -38,7 +38,7 @@ impl Env {
         self.scopes
             .iter()
             .rev()
-            .flat_map(|scope| scope.get(&key))
+            .flat_map(|scope| scope.get(&key.0))
             .next()
     }
 
@@ -46,7 +46,7 @@ impl Env {
         self.scopes
             .iter_mut()
             .rev()
-            .flat_map(|scope| scope.get_mut(&key))
+            .flat_map(|scope| scope.get_mut(&key.0))
             .next()
     }
 }
