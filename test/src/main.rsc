@@ -1,3 +1,9 @@
-let iter = new Range(0, 10)
-let flat = iter.flat_map((x) => [1, 2, x])
-println([...flat])
+fn fib(n) {
+  if n < 2 {
+    return n
+  }
+
+  return fib(n - 1) + fib(n - 2)
+}
+
+println(fib(30))
