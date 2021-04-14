@@ -1,4 +1,5 @@
 use crate::common::TLResult;
+use crate::parser::Identifier;
 use crate::runtime::{ptr, Ptr, Scope, Value};
 use std::collections::HashMap;
 
@@ -16,6 +17,10 @@ impl Object {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.fields.borrow().len()
+    }
+
     pub fn with_proto(&self, proto: Ptr<Object>) -> Object {
         let fields = self.fields.clone();
         Object {
@@ -30,10 +35,10 @@ impl Object {
         obj
     }
 
-    pub fn get(&self, field: impl AsRef<str>) -> Option<Value> {
+    pub fn get(&self, field: Identifier) -> Option<Value> {
         self.fields
             .borrow()
-            .get(field.as_ref())
+            .get(&field)
             .map(|val| val.clone())
             .or_else(|| {
                 let proto = self.proto.as_ref()?;
@@ -42,17 +47,17 @@ impl Object {
             })
     }
 
-    pub fn insert(&mut self, field: impl Into<String>, val: Value) {
-        self.fields.borrow_mut().insert(field.into(), val);
+    pub fn insert(&mut self, field: Identifier, val: Value) {
+        self.fields.borrow_mut().insert(field, val);
     }
 
     pub fn mutate_field(
         &mut self,
-        field: impl Into<String>,
+        field: Identifier,
         f: impl FnOnce(&mut Value) -> TLResult<()>,
     ) -> TLResult<()> {
         let mut fields = self.fields.borrow_mut();
-        let entry = fields.entry(field.into()).or_insert_with(|| Value::None);
+        let entry = fields.entry(field).or_insert_with(|| Value::None);
         f(entry)
     }
 

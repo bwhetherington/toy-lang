@@ -13,33 +13,6 @@ use crate::{
     runtime::{Engine, EngineState},
 };
 
-fn eval_line(line: &str, engine: &mut Engine) -> Result<(), TLError> {
-    let parsed = crate::parser::grammar::parser::expr(&line)?;
-    let body = crate::parser::desugar::desugar_expression(&parsed)?;
-    let res = engine.eval_expr(&body)?;
-    if let crate::runtime::Value::None = res {
-    } else {
-        println!("{:?}", res);
-    }
-    Ok(())
-}
-
-fn execute_line(line: &str, engine: &mut Engine) -> Result<(), TLError> {
-    use std::convert::TryFrom;
-    let parsed = crate::parser::grammar::parser::statement(&format!("{}\n", line))?;
-    let body = DStatement::try_from(&parsed)?;
-    engine.eval_stmt(EngineState::Run, &body, &mut |_, _| {})?;
-    Ok(())
-}
-
-fn process_line(line: &str, engine: &mut Engine) -> Result<(), TLError> {
-    let try_expr = eval_line(line, engine);
-    if try_expr.is_err() {
-        execute_line(line, engine)?;
-    }
-    Ok(())
-}
-
 fn repl(engine: &mut Engine) -> TLResult<()> {
     println!("TL REPL v0.1");
     let stdin = io::stdin();
@@ -49,7 +22,7 @@ fn repl(engine: &mut Engine) -> TLResult<()> {
         let line = line.unwrap();
         let line = line.trim();
         if line.len() > 0 {
-            if let Err(e) = process_line(line.trim(), engine) {
+            if let Err(e) = engine.process_line(line.trim()) {
                 println!("{}", e);
             }
         }
