@@ -3,4 +3,4 @@ mod module;
 mod parser;
 mod runtime;
 
-pub use runtime::Engine;
+pub use runtime::{init_engine, Engine};
