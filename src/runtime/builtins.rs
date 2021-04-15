@@ -155,23 +155,8 @@ impl Init for Engine {
             [] => Err(type_error("String", &Value::None)),
         });
 
-        fn builtin_print(args: &[Value], engine: &Engine) {
-            let mut is_first = true;
-            for arg in args {
-                let s = match arg {
-                    Value::String(s) => s.to_string(),
-                    other => engine.val_str(other),
-                };
-                if !is_first {
-                    print!(" ");
-                }
-                print!("{}", s);
-                is_first = false;
-            }
-        }
-
         self.define_builtin("__print__", |args, engine, _| {
-            builtin_print(args, engine);
+            engine.print(args);
             Ok(Value::None)
         });
 

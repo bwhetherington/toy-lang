@@ -11,7 +11,7 @@ use crate::{
         Scope, Value,
     },
 };
-use std::{collections::HashMap, mem, rc::Rc};
+use std::{collections::HashMap, fmt, mem, rc::Rc};
 
 #[derive(Debug)]
 pub struct Identifiers {
@@ -60,15 +60,24 @@ fn create_identifiers(ctx: &mut Desugarer) -> Identifiers {
     }
 }
 
+struct Printer(Box<dyn Fn(&str)>);
+
+impl fmt::Debug for Printer {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "<printer>")
+    }
+}
+
 #[derive(Debug)]
 pub struct Engine {
-    env: Env,
+    pub idents: Identifiers,
     pub desugarer: Desugarer,
+    env: Env,
     ret_val: Value,
     loader: Box<dyn ModuleLoader>,
     module_stack: Vec<Str>,
     module_cache: HashMap<Str, Value>,
-    pub idents: Identifiers,
+    printer: Printer,
 }
 
 pub type EvalResult<T> = TLResult<T>;
@@ -118,9 +127,31 @@ impl Engine {
             loader,
             module_stack: Vec::new(),
             module_cache: HashMap::new(),
+            printer: Printer(Box::new(|s| {
+                print!("{}", s);
+            })),
         };
         engine.env.push();
         engine
+    }
+
+    pub fn print(&self, args: &[Value]) {
+        let mut is_first = true;
+        for arg in args {
+            let s = match arg {
+                Value::String(s) => s.to_string(),
+                other => self.val_str(other),
+            };
+            if !is_first {
+                self.printer.0(" ");
+            }
+            self.printer.0(&format!("{}", s));
+            is_first = false;
+        }
+    }
+
+    pub fn set_printer(&mut self, printer: impl Fn(&str) + 'static) {
+        self.printer = Printer(Box::new(printer));
     }
 
     pub fn new(loader: impl ModuleLoader + 'static) -> Engine {
