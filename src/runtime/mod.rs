@@ -1,6 +1,6 @@
 use crate::{
     common::{Str, TLError},
-    module::ModuleLoader,
+    module::{ModuleLoader, NoopLoader},
     parser::{DStatement, Identifier},
 };
 
@@ -143,6 +143,10 @@ pub fn init_engine(loader: impl ModuleLoader + 'static) -> Engine {
         println!("{}", e);
     }
     engine
+}
+
+pub fn noop_engine() -> Engine {
+    init_engine(NoopLoader)
 }
 
 pub type Ptr<T> = Rc<RefCell<T>>;
