@@ -1,7 +1,7 @@
 use crate::runtime::Ptr;
 use crate::{
     common::{Str, TLError, TLResult},
-    module::ModuleLoader,
+    module::{ModuleLoader, NoopLoader},
     parser::{
         module, BinaryOp, DExpression, DField, DStatement, Desugarer, Identifier, LValue, Spread,
         UnaryOp,
@@ -14,28 +14,28 @@ use crate::{
 use std::{collections::HashMap, mem, rc::Rc};
 
 #[derive(Debug)]
-struct Identifiers {
+pub struct Identifiers {
     // Prototypes
-    number_proto: Identifier,
-    boolean_proto: Identifier,
-    string_proto: Identifier,
-    list_proto: Identifier,
-    object_proto: Identifier,
-    function_proto: Identifier,
+    pub number_proto: Identifier,
+    pub boolean_proto: Identifier,
+    pub string_proto: Identifier,
+    pub list_proto: Identifier,
+    pub object_proto: Identifier,
+    pub function_proto: Identifier,
 
     // Core identifiers
-    self_ident: Identifier,
-    super_ident: Identifier,
+    pub self_ident: Identifier,
+    pub super_ident: Identifier,
 
     // Operators
-    plus: Identifier,
-    minus: Identifier,
-    multiply: Identifier,
-    divide: Identifier,
-    modulo: Identifier,
-    exponentiate: Identifier,
-    iter: Identifier,
-    next: Identifier,
+    pub plus: Identifier,
+    pub minus: Identifier,
+    pub multiply: Identifier,
+    pub divide: Identifier,
+    pub modulo: Identifier,
+    pub exponentiate: Identifier,
+    pub iter: Identifier,
+    pub next: Identifier,
 }
 
 fn create_identifiers(ctx: &mut Desugarer) -> Identifiers {
@@ -46,7 +46,6 @@ fn create_identifiers(ctx: &mut Desugarer) -> Identifiers {
         list_proto: ctx.identifier("List"),
         object_proto: ctx.identifier("Object"),
         function_proto: ctx.identifier("Function"),
-
         self_ident: ctx.identifier("self"),
         super_ident: ctx.identifier("super"),
 
@@ -69,7 +68,7 @@ pub struct Engine {
     loader: Box<dyn ModuleLoader>,
     module_stack: Vec<Str>,
     module_cache: HashMap<Str, Value>,
-    idents: Identifiers,
+    pub idents: Identifiers,
 }
 
 pub type EvalResult<T> = TLResult<T>;
@@ -90,6 +89,21 @@ impl Iterator for NoneIterator {
     fn next(&mut self) -> Option<Self::Item> {
         Some(Value::None)
     }
+}
+
+macro_rules! object {
+    ($engine:expr, {$($field:ident : $value:expr),*}) => {{
+        use $crate::runtime::{ptr, Engine, Object, Value};
+        let mut obj = Object::new();
+        let engine: &mut Engine = $engine;
+        {$(
+            let ident = engine.get_ident(stringify!($field));
+            let value: Value = $value.into();
+            obj.insert(ident, value);
+        )*}
+
+        Value::Object(ptr(obj))
+    }};
 }
 
 impl Engine {
@@ -537,7 +551,7 @@ impl Engine {
                 }
             }
             Value::List(..) => self.get_list_proto().map(Some),
-            Value::String(..) => self.get_string_proto().map(Some),
+            Value::String(..) => dbg!(self.get_string_proto().map(Some)),
             Value::Number(..) => self.get_number_proto().map(Some),
             Value::Boolean(..) => self.get_boolean_proto().map(Some),
             Value::Function(..) | Value::Builtin(..) => self.get_function_proto().map(Some),
@@ -943,5 +957,11 @@ impl Engine {
                 format!("{{{}}}", inner.join(", "))
             }
         }
+    }
+}
+
+impl Default for Engine {
+    fn default() -> Self {
+        Engine::new(NoopLoader)
     }
 }

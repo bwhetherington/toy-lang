@@ -156,3 +156,49 @@ pub fn ref_eq<T>(a: impl Deref<Target = T>, b: impl Deref<Target = T>) -> bool {
     let b = b.deref() as *const T;
     a == b
 }
+
+impl Into<Value> for f64 {
+    fn into(self) -> Value {
+        Value::Number(self)
+    }
+}
+
+impl Into<Value> for bool {
+    fn into(self) -> Value {
+        Value::Boolean(self)
+    }
+}
+
+impl<'a> Into<Value> for &'a str {
+    fn into(self) -> Value {
+        Value::String(self.into())
+    }
+}
+
+impl Into<Value> for String {
+    fn into(self) -> Value {
+        Value::String(self.into())
+    }
+}
+
+impl Into<Value> for Str {
+    fn into(self) -> Value {
+        Value::String(self)
+    }
+}
+
+impl Into<Value> for () {
+    fn into(self) -> Value {
+        Value::None
+    }
+}
+
+impl<T: Into<Value> + Clone, const S: usize> Into<Value> for [T; S] {
+    fn into(self) -> Value {
+        let mut vec = Vec::with_capacity(S);
+        for x in self.iter() {
+            vec.push(x.clone().into());
+        }
+        Value::List(ptr(vec))
+    }
+}

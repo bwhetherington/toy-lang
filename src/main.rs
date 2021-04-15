@@ -6,12 +6,13 @@ mod runtime;
 use std::error;
 use std::io::{self, prelude::*};
 
-use crate::{
-    common::{TLError, TLResult},
-    module::FileLoader,
-    parser::DStatement,
-    runtime::{Engine, EngineState},
-};
+#[cfg(feature = "fs")]
+use crate::module::FileLoader;
+
+#[cfg(not(feature = "fs"))]
+use crate::module::NoopLoader;
+
+use crate::{common::TLResult, runtime::Engine};
 
 fn repl(engine: &mut Engine) -> TLResult<()> {
     println!("TL REPL v0.1");
@@ -66,7 +67,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         }
     }
 
+    #[cfg(feature = "fs")]
     let mut engine = crate::runtime::init_engine(FileLoader::new());
+
+    #[cfg(not(feature = "fs"))]
+    let mut engine = crate::runtime::init_engine(NoopLoader);
 
     match run(&mut engine, &file, interactive) {
         Err(e) => engine.print_error(&e),

@@ -1,5 +1,3 @@
-pub let foo = 10;
-
 pub let Class = {
   create() {
     return create_object(self, {})

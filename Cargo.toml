@@ -4,8 +4,12 @@ edition = "2018"
 name = "rscript2"
 version = "0.1.0"
 
+[features]
+default = ["fs"]
+fs = []
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 nohash-hasher = "0.2.0"
-peg = "*"
+peg = "0.7.0"

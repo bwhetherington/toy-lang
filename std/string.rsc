@@ -12,6 +12,7 @@ pub class StringBuilder {
   }
 
   str() {
+    println(self._parts)
     return self._parts.iter().fold("", (sum, x) => sum + x)
   }
 }
