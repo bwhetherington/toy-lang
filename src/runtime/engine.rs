@@ -582,7 +582,7 @@ impl Engine {
                 }
             }
             Value::List(..) => self.get_list_proto().map(Some),
-            Value::String(..) => (self.get_string_proto().map(Some),
+            Value::String(..) => self.get_string_proto().map(Some),
             Value::Number(..) => self.get_number_proto().map(Some),
             Value::Boolean(..) => self.get_boolean_proto().map(Some),
             Value::Function(..) | Value::Builtin(..) => self.get_function_proto().map(Some),
