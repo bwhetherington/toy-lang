@@ -46,21 +46,18 @@ class GameOfLife {
     return self._data[index]
   }
 
-  str() {
-    let sb = new StringBuilder();
+  print() {
     for row in new Range(0, self._rows) {
       for col in new Range(0, self._cols) {
         let cell = self.get_cell(row, col)
         if cell {
-          sb.push("O ")
+          print("O ")
         } else {
-          sb.push("  ")
+          print("  ")
         }
       }
-      sb.push("\n")
+      print("\n")
     }
-
-    return sb.str()
   }
 
   count_neighbors(row, col) {
@@ -101,11 +98,6 @@ fn main() {
   let cols = 10
   let board = new GameOfLife(rows, cols)
 
-  let sb = new StringBuilder()
-  sb.push("Hello")
-  sb.push("world")
-  println(sb.str())
-
   // __print__(board.str())
 
   // Initialize board state
@@ -117,12 +109,12 @@ fn main() {
 
   // Simulate board
   for _ in new Range(0, 30) {
-    // println(board)
+    board.print()
     board.advance()
-    // for _ in new Range(0, cols) {
-    //   print("--")
-    // }
-    // println()
+    for _ in new Range(0, cols) {
+      print("--")
+    }
+    println()
   }
 }
 
