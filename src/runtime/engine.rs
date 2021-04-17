@@ -966,6 +966,19 @@ impl Engine {
     }
 
     pub fn val_str(&self, val: &Value) -> String {
+        let mut stack = Vec::new();
+        self.val_str_internal(val, &mut stack)
+    }
+
+    fn val_str_internal(&self, val: &Value, val_stack: &mut Vec<Value>) -> String {
+        // If this value is already on the value stack, then we have
+        // a circular object
+        for prev_val in val_stack.iter() {
+            if self.eval_equals(prev_val, val) {
+                return "<circular>".to_string();
+            }
+        }
+
         match val {
             Value::Boolean(true) => "True".to_string(),
             Value::Boolean(false) => "False".to_string(),
@@ -974,17 +987,27 @@ impl Engine {
             Value::Function(..) | Value::Builtin(..) => "<fn>".to_string(),
             Value::String(s) => format!("\"{}\"", s),
             Value::List(xs) => {
-                let inner: Vec<_> = xs.borrow().iter().map(|x| self.val_str(x)).collect();
+                let list_val = val.clone();
+                val_stack.push(list_val);
+                let inner: Vec<_> = xs
+                    .borrow()
+                    .iter()
+                    .map(|x| self.val_str_internal(x, val_stack))
+                    .collect();
+                val_stack.pop();
                 format!("[{}]", inner.join(", "))
             }
             Value::Object(obj) => {
+                let obj_val = val.clone();
+                val_stack.push(obj_val);
                 let obj = obj.borrow();
                 let mut inner = Vec::with_capacity(obj.len());
                 for (key, val) in obj.fields.borrow().iter() {
                     let name = self.get_name(Identifier(*key));
-                    let val = self.val_str(val);
+                    let val = self.val_str_internal(val, val_stack);
                     inner.push(format!("{}: {}", name, val));
                 }
+                val_stack.pop();
                 format!("{{{}}}", inner.join(", "))
             }
         }
