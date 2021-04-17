@@ -260,6 +260,7 @@ parser!(pub grammar parser() for str {
         x:@ _ "?." _ l:arg_list() { Expression::Call(true, Box::new(x), l) }
         x:@ _ l:arg_list() { Expression::Call(false, Box::new(x), l) }
         --
+        x:new() { x }
         x:atom() { x }
     }
 
@@ -269,7 +270,6 @@ parser!(pub grammar parser() for str {
 
     rule arithmetic() -> Expression = precedence! {
         e:lambda() { e }
-        e:new() { e }
         --
         x:(@) _ "||" _ y:@ { binary(BinaryOp::LogicOr, x, y) }
         --
