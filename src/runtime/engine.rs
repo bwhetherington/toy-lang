@@ -291,9 +291,12 @@ impl Engine {
         self.define(name, f);
     }
 
+    fn get_item(&self, key: Identifier) -> Option<&Value> {
+        self.env.get(key)
+    }
+
     fn lookup(&self, key: Identifier) -> EvalResult<&Value> {
-        self.env
-            .get(key)
+        self.get_item(key)
             .ok_or_else(|| TLError::Undefined(self.get_name(key)))
     }
 
@@ -390,8 +393,6 @@ impl Engine {
         let mut closure = Scope::default();
 
         ignore.push();
-        ignore.insert(self.idents.self_ident);
-        ignore.insert(self.idents.super_ident);
 
         for param in params.iter().chain(last.iter()) {
             ignore.insert(*param);
@@ -403,13 +404,21 @@ impl Engine {
 
         ignore.pop();
 
-        Function {
+        let mut f = Function {
             self_value: None,
             params: params.clone(),
             last: last.clone(),
             body: body.clone(),
             closure,
+        };
+
+        // Capture the existing self value if present
+        if let Some(val) = self.get_item(self.idents.self_ident) {
+            println!("captured self value: {:?}", val);
+            f.self_value = Some(val.clone());
         }
+
+        f
     }
 
     fn iterate_value(

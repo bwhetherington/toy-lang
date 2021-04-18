@@ -1,9 +1,10 @@
-fn fib(n) {
-  if n < 2 {
-    return n
+let foo = {
+  bar(f) {
+    f()
   }
-
-  return fib(n - 1) + fib(n - 2)
 }
 
-println(fib(32))
+println(self)
+
+let f = () => println(self)
+foo.bar(f)

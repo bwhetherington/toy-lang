@@ -64,8 +64,8 @@ impl fmt::Debug for Value {
             Value::Boolean(b) if *b => write!(f, "True"),
             Value::Boolean(..) => write!(f, "False"),
             Value::List(xs) => write!(f, "{:?}", xs.borrow()),
-            Value::Function(..) => write!(f, "<Function>"),
-            Value::Builtin(..) => write!(f, "<Function>"),
+            Value::Function(..) => write!(f, "<fn>"),
+            Value::Builtin(..) => write!(f, "<fn>"),
             Value::String(s) => write!(f, "{:?}", s),
             Value::Object(o) => {
                 let obj = o.borrow();
