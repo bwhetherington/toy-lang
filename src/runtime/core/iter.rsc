@@ -106,17 +106,13 @@ class Skip : Iterator {
   init(base, amount) {
     super.init()
     self._base = base
-    self._amount = amount
-    self._current = 0
+    for _ in new Range(0, amount) {
+      base.next()
+    }
   }
 
   next() {
-    let val = self._base.next()
-    if self._current < self._amount {
-      self._current += 1
-    } else {
-      return val
-    }
+    return self._base.next()
   }
 }
 
@@ -140,11 +136,86 @@ class Enumerate : Iterator {
   }
 }
 
+class TakeWhile : Iterator {
+  init(base, f) {
+    super.init()
+    self._base = base
+    self._f = f
+    self._is_done = False
+  }
+
+  next() {
+    if !self._is_done {
+      let val = self._base.next()
+      if self._f(val) {
+        return val
+      } else {
+        self._is_done = True
+      }
+    }
+  }
+}
+
+class Take : Iterator {
+  init(base, num) {
+    super.init()
+    self._base = base
+    self._num = num
+  }
+
+  next() {
+    if self._num > 0 {
+      self._num -= 1
+      return self._base.next()
+    }
+  }
+}
+
+class Zip : Iterator {
+  init(a, b) {
+    self._a = a
+    self._b = b
+  }
+
+  next() {
+    let a = self._a.next()
+    let b = self._b.next()
+    if a != None && b != None {
+      return [a, b]
+    }
+  }
+}
+
+class ZipWith : Iterator {
+  init(a, b, f) {
+    super.init()
+    self._a = a
+    self._b = b
+    self._f = f
+  }
+
+  next() {
+    let a = self._a.next()
+    let b = self._b.next()
+    if a != None && b != None {
+      return self._f(a, b)
+    }
+  }
+}
+
+fn zip_vals(a, b) {
+  return [a, b]
+}
+
 Iterator.filter = (f) => new Filter(self, f)
 Iterator.map = (f) => new Map(self, f)
 Iterator.flat_map = (f) => new FlatMap(self, f)
 Iterator.skip = (amount) => new Skip(self, amount)
 Iterator.enumerate = () => new Enumerate(self)
+Iterator.take = (amount) => new Take(self, amount)
+Iterator.take_while = (f) => new TakeWhile(self, f)
+Iterator.zip_with = (b, f) => new ZipWith(self, b.iter(), f)
+Iterator.zip = (b) => self.zip_with(b, zip_vals)
 
 fn list_iter(xs) {
   return Range.new(0, xs.len()).map((i) => xs[i])

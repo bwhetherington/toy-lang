@@ -414,7 +414,6 @@ impl Engine {
 
         // Capture the existing self value if present
         if let Some(val) = self.get_item(self.idents.self_ident) {
-            println!("captured self value: {:?}", val);
             f.self_value = Some(val.clone());
         }
 
