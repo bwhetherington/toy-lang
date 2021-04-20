@@ -1,3 +1,3 @@
-pub let func = import("./func.rsc")
-pub let string = import("./string.rsc")
-pub let util = import("./util.rsc")
+pub let func = import("std/func.rsc")
+pub let string = import("std/string.rsc")
+pub let util = import("std/util.rsc")
