@@ -3,4 +3,7 @@ mod module;
 mod parser;
 mod runtime;
 
-pub use runtime::{init_engine, noop_engine, Engine, Value};
+pub use crate::{
+    module::ModuleLoader,
+    runtime::{init_engine, noop_engine, Engine, Value},
+};

@@ -4,7 +4,5 @@ let foo = {
   }
 }
 
-println(self)
-
 let f = () => println(self)
 foo.bar(f)
