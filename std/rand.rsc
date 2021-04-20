@@ -55,7 +55,7 @@ pub fn advantage_rolls() {
   return a.zip_with(b, max)
 }
 
-pub fn disadvantage_rolls() = {
+pub fn disadvantage_rolls() {
   let seed = time()
   let a = new Rng(seed).ints(1, 21)
   let b = new Rng(seed + 1).ints(1, 21)
