@@ -154,6 +154,10 @@ impl Engine {
         self.printer = Printer(Box::new(printer));
     }
 
+    pub fn set_loader(&mut self, loader: impl ModuleLoader + 'static) {
+        self.loader = Box::new(loader);
+    }
+
     pub fn new(loader: impl ModuleLoader + 'static) -> Engine {
         Engine::from_dyn_loader(Box::new(loader))
     }
