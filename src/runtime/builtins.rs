@@ -3,6 +3,7 @@ use crate::{
     parser::Desugarer,
     runtime::{builtin, ptr, type_error, Engine, Object, Value},
 };
+use instant::now;
 
 pub trait Init {
     type Error;
@@ -175,8 +176,11 @@ impl Init for Engine {
             _ => todo!(),
         });
 
+        self.define_builtin("time", |_, _, _| Ok(Value::Number(now())));
+
         self.define_builtin("abs", unary_fn(f64::abs));
         self.define_builtin("sqrt", unary_fn(f64::sqrt));
+        self.define_builtin("floor", unary_fn(f64::floor));
 
         self.define_builtin("sin", unary_fn(f64::sin));
         self.define_builtin("cos", unary_fn(f64::cos));

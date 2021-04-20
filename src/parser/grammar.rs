@@ -46,7 +46,7 @@ pub struct Spread<T> {
 
 #[derive(Debug, Clone)]
 pub enum Expression {
-    Int(i32),
+    Int(i64),
     Float(f64),
     Boolean(bool),
     None,
@@ -128,7 +128,7 @@ parser!(pub grammar parser() for str {
         = n:$(['0'..='9']) { n }
         / expected!("digit")
 
-    rule int() -> i32
+    rule int() -> i64
         = n:$(['+' | '-']? digit()+) { n.parse().unwrap() }
         / expected!("Int")
 

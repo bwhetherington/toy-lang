@@ -7,9 +7,11 @@ version = "0.1.0"
 [features]
 default = ["fs"]
 fs = []
+wasm = ["instant/wasm-bindgen"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+instant = {version = "0.1", features = ["now"]}
 nohash-hasher = "0.2.0"
 peg = "0.7.0"
